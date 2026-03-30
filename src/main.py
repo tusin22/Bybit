@@ -56,8 +56,19 @@ class RoutedSignalParser:
             )
             return signal
         except (BybitExecutionClientError, TradeExecutionError) as exc:
-            LOGGER.error("Falha segura ao executar ordem de entrada: %s", exc)
-            raise
+            LOGGER.error(
+                "Falha segura ao executar ordem de entrada: %s | symbol=%s category=%s planned_quantity=%s instrument_qty_step=%s",
+                exc,
+                plan.symbol,
+                plan.category,
+                plan.planned_quantity,
+                plan.qty_step,
+            )
+            signal.entry_eligible = False
+            signal.entry_validation_reason = (
+                "Falha ao executar ordem na Bybit; callback mantido ativo: " f"{exc}"
+            )
+            return signal
 
 
 async def _run() -> int:

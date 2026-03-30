@@ -4,7 +4,7 @@ import pytest
 
 from src.config import Settings
 from src.models.execution_plan import ExecutionPlan
-from src.services.trade_executor import TradeExecutionError, TradeExecutor
+from src.services.trade_executor import TradeExecutionError, TradeExecutor, _format_qty
 
 
 class FakeExecutionClient:
@@ -170,3 +170,7 @@ def test_execute_entry_fails_clearly_when_critical_data_is_missing() -> None:
         executor.execute_entry(plan=invalid_plan)
 
     assert client.calls == 0
+
+
+def test_format_qty_serializes_without_float_noise_using_qty_step() -> None:
+    assert _format_qty(86.90000000000001, qty_step="0.001") == "86.900"
