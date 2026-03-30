@@ -19,6 +19,9 @@ class Settings:
     bybit_api_key: str
     bybit_api_secret: str
     bybit_testnet: bool
+    execution_sizing_mode: str
+    execution_fixed_notional_usdt: float
+    execution_fixed_qty: float
 
 
 def _parse_bool(value: str | None, default: bool = True) -> bool:
@@ -32,6 +35,18 @@ def _require_env(name: str) -> str:
     if value is None or not value.strip():
         raise ValueError(f"Variável obrigatória ausente ou vazia: {name}")
     return value.strip()
+
+def _parse_float_env(name: str, *, default: float | None = None) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        if default is None:
+            raise ValueError(f"Variável obrigatória ausente ou vazia: {name}")
+        return default
+
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(f"Variável {name} deve ser um número válido.") from exc
 
 
 def _parse_int_env(name: str) -> int:
@@ -57,4 +72,13 @@ def load_settings() -> Settings:
         bybit_api_key=os.getenv("BYBIT_API_KEY", "").strip(),
         bybit_api_secret=os.getenv("BYBIT_API_SECRET", "").strip(),
         bybit_testnet=_parse_bool(os.getenv("BYBIT_TESTNET"), default=True),
+        execution_sizing_mode=os.getenv(
+            "EXECUTION_SIZING_MODE",
+            "fixed_notional_usdt",
+        ).strip(),
+        execution_fixed_notional_usdt=_parse_float_env(
+            "EXECUTION_FIXED_NOTIONAL_USDT",
+            default=25.0,
+        ),
+        execution_fixed_qty=_parse_float_env("EXECUTION_FIXED_QTY", default=0.0),
     )

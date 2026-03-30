@@ -10,14 +10,18 @@ Projeto em Python para processar sinais de trade recebidos via Telegram, com evo
 - Integração **read-only** com Bybit API V5 via **pybit** para validar entrada tardia.
 - Consulta de preço atual do símbolo do sinal (escopo atual: `category=linear`).
 - Consulta de informações do instrumento/símbolo (escopo atual: `category=linear`).
-- Marcação do sinal como elegível/não elegível conforme faixa de entrada.
-- Formalização de intenção operacional no domínio:
-  - `LONG` => `open_long`
-  - `SHORT` => `open_short`
-- Log estruturado do sinal parseado com sucesso.
+- Camada nova de **planejamento de execução** (`ExecutionPlan`) sem interação transacional com corretora.
+- Validação de elegibilidade final do plano com base em:
+  - status do instrumento;
+  - presença de `tickSize` e `qtyStep`;
+  - janela de entrada do sinal;
+  - quantity positiva após normalização.
+- Sizing configurável por `.env` (modo padrão: `fixed_notional_usdt`).
+- Log estruturado do plano gerado com sucesso.
 - Em falha de parsing, log de erro claro e continuidade do loop.
 - **Sem envio de ordens nesta fase**.
 - **Sem abertura de posições nesta fase**.
+- **Sem websocket e sem monitor nesta fase**.
 
 ## Requisitos
 
@@ -58,7 +62,13 @@ cp .env.example .env
 
 > Nesta fase usamos apenas endpoints públicos de market (`get_tickers` e `get_instruments_info`), então autenticação é opcional.
 
-4. Garanta `DRY_RUN=true`.
+4. Configure sizing para planejamento:
+
+- `EXECUTION_SIZING_MODE=fixed_notional_usdt` (padrão e recomendado nesta fase).
+- `EXECUTION_FIXED_NOTIONAL_USDT` (ex.: `25`), usado com `fixed_notional_usdt`.
+- `EXECUTION_FIXED_QTY` (ex.: `0.01`), usado apenas com `fixed_qty`.
+
+5. Garanta `DRY_RUN=true`.
 
 ## Executar listener em dry-run
 
@@ -78,9 +88,12 @@ No startup, o listener valida/resolve `TELEGRAM_SOURCE_CHAT`; se o valor for inv
   - consulta de preço atual (`linear`);
   - captura de metadados básicos do instrumento (`status`, `tickSize`, `qtyStep`);
   - validação da janela de entrada.
-- Se o preço atual estiver fora da faixa de entrada, o sinal é marcado como inválido para entrada tardia.
-- Se o preço atual estiver na faixa, o sinal é marcado como elegível para futura execução.
-- Não há envio de ordens nem abertura de posição nesta fase.
+- O sinal enriquecido é convertido em `ExecutionPlan`:
+  - normalização de preços por `tickSize` com regras explícitas por contexto (entrada, stop e take profit);
+  - normalização de quantity por `qtyStep`;
+  - cálculo de quantity por sizing fixo configurado.
+- Se qualquer validação crítica falhar, o plano é marcado como inelegível com motivo explícito.
+- Não há envio de ordens nem abertura de posição nesta fase (inclusive na preparação para a próxima fase de escrita na testnet).
 
 ## Rodar testes
 
