@@ -10,18 +10,19 @@ Projeto em Python para processar sinais de trade recebidos via Telegram, com evo
 - Integração **read-only** com Bybit API V5 via **pybit** para validar entrada tardia.
 - Consulta de preço atual do símbolo do sinal (escopo atual: `category=linear`).
 - Consulta de informações do instrumento/símbolo (escopo atual: `category=linear`).
-- Camada nova de **planejamento de execução** (`ExecutionPlan`) sem interação transacional com corretora.
-- Validação de elegibilidade final do plano com base em:
-  - status do instrumento;
-  - presença de `tickSize` e `qtyStep`;
-  - janela de entrada do sinal;
-  - quantity positiva após normalização.
-- Sizing configurável por `.env` (modo padrão: `fixed_notional_usdt`).
-- Log estruturado do plano gerado com sucesso.
+- Camada de **planejamento de execução** (`ExecutionPlan`) para normalizar preços e qty.
+- Primeira camada de **escrita restrita à Bybit testnet** para enviar **apenas ordem de entrada** (`Market`).
+- Proteções obrigatórias de execução:
+  - bloqueio quando `DRY_RUN=true`;
+  - bloqueio quando `ENABLE_ORDER_EXECUTION=false`;
+  - bloqueio quando `ENABLE_ORDER_EXECUTION=true` e `BYBIT_TESTNET=false`;
+  - bloqueio quando `ExecutionPlan` não for elegível.
+- Log estruturado do resultado da tentativa de execução (`ExecutionResult`).
 - Em falha de parsing, log de erro claro e continuidade do loop.
-- **Sem envio de ordens nesta fase**.
-- **Sem abertura de posições nesta fase**.
-- **Sem websocket e sem monitor nesta fase**.
+- **Sem TP/SL automáticos nesta fase**.
+- **Sem reduceOnly nesta fase**.
+- **Sem monitor e sem websocket nesta fase**.
+- A confirmação final de execução/preenchimento da ordem ainda não está implementada nesta fase.
 
 ## Requisitos
 
@@ -54,23 +55,30 @@ cp .env.example .env
 - `TELEGRAM_SESSION_NAME`: nome local da sessão Telethon.
 - `TELEGRAM_SOURCE_CHAT`: chat/canal alvo no formato **`@username` público** ou **inteiro numérico válido** (incluindo sinal, como `-100...`, quando aplicável).
 
-3. Configure os campos mínimos da Bybit para integração read-only:
+3. Configure os campos da Bybit:
 
-- `BYBIT_TESTNET` (obrigatório para escolher ambiente)
-- `BYBIT_API_KEY` (**opcional** nesta fase)
-- `BYBIT_API_SECRET` (**opcional** nesta fase)
+- `BYBIT_TESTNET=true`
+- `BYBIT_API_KEY`
+- `BYBIT_API_SECRET`
 
-> Nesta fase usamos apenas endpoints públicos de market (`get_tickers` e `get_instruments_info`), então autenticação é opcional.
+> A validação read-only funciona sem autenticação, mas a escrita de ordem exige credenciais válidas.
 
-4. Configure sizing para planejamento:
+4. Configure proteções de execução:
+
+- `DRY_RUN=true` mantém bloqueio total de envio.
+- `ENABLE_ORDER_EXECUTION=false` mantém bloqueio total de envio.
+- Para liberar envio em testnet, as três condições devem ser atendidas ao mesmo tempo:
+  - `DRY_RUN=false`
+  - `ENABLE_ORDER_EXECUTION=true`
+  - `BYBIT_TESTNET=true`
+
+5. Configure sizing para planejamento:
 
 - `EXECUTION_SIZING_MODE=fixed_notional_usdt` (padrão e recomendado nesta fase).
 - `EXECUTION_FIXED_NOTIONAL_USDT` (ex.: `25`), usado com `fixed_notional_usdt`.
 - `EXECUTION_FIXED_QTY` (ex.: `0.01`), usado apenas com `fixed_qty`.
 
-5. Garanta `DRY_RUN=true`.
-
-## Executar listener em dry-run
+## Executar listener
 
 ```bash
 python -m src.main
@@ -92,8 +100,13 @@ No startup, o listener valida/resolve `TELEGRAM_SOURCE_CHAT`; se o valor for inv
   - normalização de preços por `tickSize` com regras explícitas por contexto (entrada, stop e take profit);
   - normalização de quantity por `qtyStep`;
   - cálculo de quantity por sizing fixo configurado.
-- Se qualquer validação crítica falhar, o plano é marcado como inelegível com motivo explícito.
-- Não há envio de ordens nem abertura de posição nesta fase (inclusive na preparação para a próxima fase de escrita na testnet).
+- O executor avalia proteções e elegibilidade:
+  - se bloqueado por proteção, registra o motivo;
+  - se elegível e desbloqueado, envia ordem de entrada `Market` em `category=linear` com one-way (`positionIdx=0`).
+- O resultado estruturado (`ExecutionResult`) separa:
+  - tentativa de ordem (`order_attempted`);
+  - submissão aceita pela API (`order_sent` / ACK inicial);
+  - confirmação final (`order_confirmed`), que permanece pendente nesta fase (`confirmation_status=pending_confirmation`).
 
 ## Rodar testes
 

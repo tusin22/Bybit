@@ -19,6 +19,7 @@ class Settings:
     bybit_api_key: str
     bybit_api_secret: str
     bybit_testnet: bool
+    enable_order_execution: bool
     execution_sizing_mode: str
     execution_fixed_notional_usdt: float
     execution_fixed_qty: float
@@ -72,6 +73,10 @@ def load_settings() -> Settings:
         bybit_api_key=os.getenv("BYBIT_API_KEY", "").strip(),
         bybit_api_secret=os.getenv("BYBIT_API_SECRET", "").strip(),
         bybit_testnet=_parse_bool(os.getenv("BYBIT_TESTNET"), default=True),
+        enable_order_execution=_parse_bool(
+            os.getenv("ENABLE_ORDER_EXECUTION"),
+            default=False,
+        ),
         execution_sizing_mode=os.getenv(
             "EXECUTION_SIZING_MODE",
             "fixed_notional_usdt",

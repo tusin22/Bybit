@@ -28,6 +28,7 @@ def _settings(
         bybit_api_key="",
         bybit_api_secret="",
         bybit_testnet=True,
+        enable_order_execution=False,
         execution_sizing_mode=mode,
         execution_fixed_notional_usdt=fixed_notional_usdt,
         execution_fixed_qty=fixed_qty,
