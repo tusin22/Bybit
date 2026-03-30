@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+import logging
 
 from src.bybit.execution_client import BybitExecutionClient, BybitOrderRequest
 from src.config import Settings
 from src.models.execution_plan import ExecutionPlan
 from src.models.execution_result import ExecutionResult
+
+LOGGER = logging.getLogger(__name__)
 
 
 class TradeExecutionError(ValueError):
@@ -67,13 +71,23 @@ class TradeExecutor:
 
         self._validate_critical_data(plan=plan)
         client_order_context = f"entry-{plan.symbol.lower()}-{uuid.uuid4().hex[:12]}"
+        order_qty = _format_qty(plan.planned_quantity, qty_step=plan.qty_step)
+
+        LOGGER.info(
+            "Preparando envio de ordem de entrada. symbol=%s category=%s planned_quantity=%s instrument_qty_step=%s serialized_qty=%s",
+            plan.symbol,
+            plan.category,
+            plan.planned_quantity,
+            plan.qty_step,
+            order_qty,
+        )
 
         response = self._execution_client.place_entry_market_order(
             order=BybitOrderRequest(
                 category=plan.category,
                 symbol=plan.symbol,
                 side=plan.planned_entry_side,
-                qty=_format_qty(plan.planned_quantity),
+                qty=order_qty,
                 position_idx=0,
                 order_link_id=client_order_context,
             )
@@ -140,8 +154,20 @@ class TradeExecutor:
         )
 
 
-def _format_qty(quantity: float) -> str:
-    return format(quantity, ".16g")
+def _format_qty(quantity: float, *, qty_step: str | None) -> str:
+    decimal_quantity = Decimal(str(quantity))
+    if qty_step is None:
+        return format(decimal_quantity.normalize(), "f")
+
+    try:
+        decimal_step = Decimal(qty_step)
+    except (InvalidOperation, ValueError) as exc:
+        raise TradeExecutionError(f"qty_step inválido para serialização final: {qty_step}") from exc
+
+    if decimal_step <= 0:
+        raise TradeExecutionError(f"qty_step inválido para serialização final: {qty_step}")
+
+    return format(decimal_quantity.quantize(decimal_step), "f")
 
 
 def _build_response_summary(response: dict[str, object]) -> dict[str, object]:
