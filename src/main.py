@@ -6,6 +6,7 @@ import logging
 from src.bybit import BybitClientError, BybitReadOnlyClient
 from src.config import load_settings
 from src.parsing.vectra_parser import VectraSignalParser
+from src.services.execution_planner import ExecutionPlanner
 from src.services.signal_router import SignalRouter
 from src.telegram.listener import TelegramSignalListener
 from src.utils.logging import configure_logging
@@ -16,15 +17,17 @@ LOGGER = logging.getLogger(__name__)
 class RoutedSignalParser:
     """Adapter para manter listener existente e validar sinal via Bybit read-only."""
 
-    def __init__(self, router: SignalRouter) -> None:
+    def __init__(self, router: SignalRouter, planner: ExecutionPlanner) -> None:
         self._parser = VectraSignalParser()
         self._router = router
+        self._planner = planner
 
     def parse(self, raw_text: str):
         signal = self._parser.parse(raw_text)
 
         try:
-            return self._router.enrich_with_bybit_validation(signal)
+            enriched_signal = self._router.enrich_with_bybit_validation(signal)
+            return self._planner.build_plan(signal=enriched_signal)
         except BybitClientError as exc:
             signal.entry_eligible = False
             signal.entry_validation_reason = (
@@ -48,10 +51,14 @@ async def _run() -> int:
         testnet=settings.bybit_testnet,
     )
     signal_router = SignalRouter(bybit_client=bybit_client)
+    execution_planner = ExecutionPlanner(settings=settings)
 
     listener = TelegramSignalListener(
         settings=settings,
-        parser_factory=lambda: RoutedSignalParser(router=signal_router),
+        parser_factory=lambda: RoutedSignalParser(
+            router=signal_router,
+            planner=execution_planner,
+        ),
     )
     await listener.run()
     return 0
