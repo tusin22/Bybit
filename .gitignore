@@ -1,1 +1,29 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+.venv/
+venv/
+
+# Environment files
 .env
+.env.*
+
+# Telethon session
+*.session
+*.session-journal
+
+# Logs
+*.log
+logs/
+
+# Pytest / tooling cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/settings.json
