@@ -16,6 +16,9 @@ class Settings:
     telegram_api_hash: str
     telegram_session_name: str
     telegram_source_chat: str
+    bybit_api_key: str
+    bybit_api_secret: str
+    bybit_testnet: bool
 
 
 def _parse_bool(value: str | None, default: bool = True) -> bool:
@@ -51,4 +54,7 @@ def load_settings() -> Settings:
         telegram_api_hash=_require_env("TELEGRAM_API_HASH"),
         telegram_session_name=_require_env("TELEGRAM_SESSION_NAME"),
         telegram_source_chat=_require_env("TELEGRAM_SOURCE_CHAT"),
+        bybit_api_key=os.getenv("BYBIT_API_KEY", "").strip(),
+        bybit_api_secret=os.getenv("BYBIT_API_SECRET", "").strip(),
+        bybit_testnet=_parse_bool(os.getenv("BYBIT_TESTNET"), default=True),
     )
