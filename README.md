@@ -8,8 +8,8 @@ Projeto em Python para processar sinais de trade recebidos via Telegram, com evo
 - Escuta de **um único chat/canal** configurado em `.env`.
 - Recebimento de texto bruto e envio ao parser existente (`VectraSignalParser`).
 - Integração **read-only** com Bybit API V5 via **pybit** para validar entrada tardia.
-- Consulta de preço atual do símbolo do sinal.
-- Consulta de informações do instrumento/símbolo.
+- Consulta de preço atual do símbolo do sinal (escopo atual: `category=linear`).
+- Consulta de informações do instrumento/símbolo (escopo atual: `category=linear`).
 - Marcação do sinal como elegível/não elegível conforme faixa de entrada.
 - Formalização de intenção operacional no domínio:
   - `LONG` => `open_long`
@@ -52,9 +52,11 @@ cp .env.example .env
 
 3. Configure os campos mínimos da Bybit para integração read-only:
 
-- `BYBIT_API_KEY`
-- `BYBIT_API_SECRET`
-- `BYBIT_TESTNET`
+- `BYBIT_TESTNET` (obrigatório para escolher ambiente)
+- `BYBIT_API_KEY` (**opcional** nesta fase)
+- `BYBIT_API_SECRET` (**opcional** nesta fase)
+
+> Nesta fase usamos apenas endpoints públicos de market (`get_tickers` e `get_instruments_info`), então autenticação é opcional.
 
 4. Garanta `DRY_RUN=true`.
 
@@ -72,8 +74,9 @@ No startup, o listener valida/resolve `TELEGRAM_SOURCE_CHAT`; se o valor for inv
 - Nova mensagem chega no chat/canal configurado.
 - O texto bruto (`raw_text`) é enviado para o parser.
 - Se o parsing for válido, o sinal é enriquecido com validação read-only da Bybit:
-  - consulta de instrumento;
-  - consulta de preço atual;
+  - consulta de instrumento (`linear`);
+  - consulta de preço atual (`linear`);
+  - captura de metadados básicos do instrumento (`status`, `tickSize`, `qtyStep`);
   - validação da janela de entrada.
 - Se o preço atual estiver fora da faixa de entrada, o sinal é marcado como inválido para entrada tardia.
 - Se o preço atual estiver na faixa, o sinal é marcado como elegível para futura execução.

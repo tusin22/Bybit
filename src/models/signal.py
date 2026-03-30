@@ -16,6 +16,9 @@ class Signal:
     entry_eligible: bool | None = None
     entry_validation_reason: str | None = None
     current_price: float | None = None
+    instrument_status: str | None = None
+    instrument_tick_size: str | None = None
+    instrument_qty_step: str | None = None
 
     def __post_init__(self) -> None:
         normalized_side = self.side.strip().upper()
