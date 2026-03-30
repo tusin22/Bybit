@@ -117,6 +117,10 @@ async def _run() -> int:
 def main() -> int:
     try:
         return asyncio.run(_run())
+    except KeyboardInterrupt:
+        configure_logging("INFO")
+        LOGGER.info("Encerrando bot...")
+        return 0
     except ValueError as exc:
         configure_logging("INFO")
         LOGGER.error(

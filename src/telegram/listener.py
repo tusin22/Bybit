@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Callable
@@ -75,4 +76,11 @@ class TelegramSignalListener:
             )
 
         LOGGER.info("Cliente Telegram conectado. Aguardando novas mensagens...")
-        await self._client.run_until_disconnected()
+        try:
+            await self._client.run_until_disconnected()
+        except asyncio.CancelledError:
+            LOGGER.info("Encerrando bot...")
+        finally:
+            if self._client.is_connected():
+                await self._client.disconnect()
+            LOGGER.info("Cliente Telegram desconectado.")
