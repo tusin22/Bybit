@@ -23,7 +23,7 @@ Projeto em Python para processar sinais de trade recebidos via Telegram, com evo
 - **Sem TP/SL automáticos nesta fase**.
 - **Sem reduceOnly nesta fase**.
 - **Sem monitor e sem websocket nesta fase**.
-- A confirmação final de execução/preenchimento da ordem ainda não está implementada nesta fase.
+- Confirmação pós-ACK implementada com polling REST curto e controlado (sem websocket).
 
 ## Requisitos
 
@@ -111,7 +111,7 @@ No startup, o listener valida/resolve `TELEGRAM_SOURCE_CHAT`; se o valor for inv
 - O resultado estruturado (`ExecutionResult`) separa:
   - tentativa de ordem (`order_attempted`);
   - submissão aceita pela API (`order_sent` / ACK inicial);
-  - confirmação final (`order_confirmed`), que permanece pendente nesta fase (`confirmation_status=pending_confirmation`).
+  - confirmação pós-ACK (`order_confirmed`) via REST com status explícito: `pending_confirmation`, `confirmed`, `rejected`, `cancelled`, `not_found` ou `timeout`.
 
 ## Rodar testes
 

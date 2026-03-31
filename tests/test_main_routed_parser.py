@@ -73,3 +73,23 @@ def test_routed_signal_parser_handles_bybit_rejection_without_raising() -> None:
     assert isinstance(result, Signal)
     assert result.entry_eligible is False
     assert "callback mantido ativo" in (result.entry_validation_reason or "")
+
+
+class ConfirmationFailingExecutor:
+    def execute_entry(self, *, plan: ExecutionPlan):
+        raise BybitExecutionClientError("Falha Bybit em get_order_history: retCode=10006 retMsg=system busy")
+
+
+def test_routed_signal_parser_keeps_callback_alive_when_confirmation_fails() -> None:
+    parser = RoutedSignalParser(
+        router=FakeRouter(),
+        planner=FakePlanner(),
+        executor=ConfirmationFailingExecutor(),
+    )
+    parser._parser = FakeSignalParser()
+
+    result = parser.parse("BTCUSDT LONG")
+
+    assert isinstance(result, Signal)
+    assert result.entry_eligible is False
+    assert "callback mantido ativo" in (result.entry_validation_reason or "")

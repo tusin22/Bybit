@@ -9,6 +9,8 @@ Fontes oficiais obrigatórias para integrações deste projeto.
 ## Bybit API V5
 - Documentação oficial (intro): https://bybit-exchange.github.io/docs/v5/intro
 - Place Order (V5): https://bybit-exchange.github.io/docs/v5/order/create-order
+- Get Open & Closed Orders (V5): https://bybit-exchange.github.io/docs/v5/order/open-order
+- Get Order History (V5): https://bybit-exchange.github.io/docs/v5/order/order-list
 
 ## pybit
 - Repositório oficial: https://github.com/bybit-exchange/pybit

@@ -1,6 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from typing import Literal
+
+ConfirmationStatus = Literal[
+    "not_sent",
+    "pending_confirmation",
+    "confirmed",
+    "rejected",
+    "cancelled",
+    "not_found",
+    "timeout",
+]
 
 
 @dataclass(slots=True)
@@ -15,7 +26,8 @@ class ExecutionResult:
     blocked_by_execution_flag: bool
     blocked_by_testnet_guard: bool
     blocked_reason: str | None
-    confirmation_status: str
+    confirmation_status: ConfirmationStatus
+    confirmation_reason: str | None
     bybit_response_summary: dict[str, object]
     client_order_context: str | None
     success: bool
