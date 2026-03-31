@@ -51,6 +51,8 @@ def _validated_signal(*, side: str = "LONG") -> Signal:
     signal.instrument_status = "Trading"
     signal.instrument_tick_size = "0.10"
     signal.instrument_qty_step = "0.001"
+    signal.instrument_min_order_qty = "0.001"
+    signal.instrument_min_notional_value = "5"
     return signal
 
 
@@ -73,6 +75,8 @@ def test_build_plan_with_fixed_notional_usdt() -> None:
     assert plan.normalized_stop_loss == 63900.0
     assert plan.planned_quantity > 0
     assert plan.planned_quantity == 0.001
+    assert plan.min_order_qty == "0.001"
+    assert plan.min_notional_value == "5"
 
 
 def test_build_plan_ineligible_when_instrument_status_is_not_trading() -> None:
@@ -96,6 +100,68 @@ def test_build_plan_ineligible_when_critical_metadata_is_missing() -> None:
 
     assert plan.eligible is False
     assert "Metadado crítico" in (plan.ineligibility_reason or "")
+
+
+def test_build_plan_ineligible_when_below_min_order_qty() -> None:
+    planner = ExecutionPlanner(
+        settings=_settings(mode="fixed_qty", fixed_qty=0.005)
+    )
+    signal = _validated_signal()
+    signal.instrument_min_order_qty = "0.01"
+
+    plan = planner.build_plan(signal=signal)
+
+    assert plan.eligible is False
+    assert "Quantidade abaixo de minOrderQty" in (plan.ineligibility_reason or "")
+
+
+def test_build_plan_ineligible_when_below_min_notional_value() -> None:
+    planner = ExecutionPlanner(
+        settings=_settings(mode="fixed_qty", fixed_qty=0.001)
+    )
+    signal = _validated_signal()
+    signal.instrument_min_notional_value = "100"
+
+    plan = planner.build_plan(signal=signal)
+
+    assert plan.eligible is False
+    assert "Valor nocional abaixo de minNotionalValue" in (plan.ineligibility_reason or "")
+
+
+def test_build_plan_eligible_when_meets_minimums() -> None:
+    planner = ExecutionPlanner(
+        settings=_settings(mode="fixed_qty", fixed_qty=0.002)
+    )
+    signal = _validated_signal()
+    signal.instrument_min_order_qty = "0.0001"
+    signal.instrument_min_notional_value = "20"
+
+    plan = planner.build_plan(signal=signal)
+
+    assert plan.eligible is True
+    assert plan.ineligibility_reason is None
+
+
+def test_build_plan_ineligible_when_min_notional_is_missing() -> None:
+    planner = ExecutionPlanner(settings=_settings())
+    signal = _validated_signal()
+    signal.instrument_min_notional_value = None
+
+    plan = planner.build_plan(signal=signal)
+
+    assert plan.eligible is False
+    assert "Metadado crítico ausente" in (plan.ineligibility_reason or "")
+
+
+def test_build_plan_ineligible_when_min_order_qty_is_missing() -> None:
+    planner = ExecutionPlanner(settings=_settings())
+    signal = _validated_signal()
+    signal.instrument_min_order_qty = None
+
+    plan = planner.build_plan(signal=signal)
+
+    assert plan.eligible is False
+    assert "Metadado crítico ausente" in (plan.ineligibility_reason or "")
 
 
 def test_normalize_helpers_round_down_to_tick_and_step() -> None:

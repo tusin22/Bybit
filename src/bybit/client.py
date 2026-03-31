@@ -14,6 +14,8 @@ class InstrumentInfo:
     status: str | None
     tick_size: str | None
     qty_step: str | None
+    min_order_qty: str | None
+    min_notional_value: str | None
     raw: dict[str, object]
 
 
@@ -79,8 +81,12 @@ class BybitReadOnlyClient:
             tick_size = price_filter.get("tickSize")
 
         qty_step = None
+        min_order_qty = None
+        min_notional_value = None
         if isinstance(lot_size_filter, dict):
             qty_step = lot_size_filter.get("qtyStep")
+            min_order_qty = lot_size_filter.get("minOrderQty")
+            min_notional_value = lot_size_filter.get("minNotionalValue")
 
         status = raw.get("status")
 
@@ -90,6 +96,10 @@ class BybitReadOnlyClient:
             status=status if isinstance(status, str) else None,
             tick_size=tick_size if isinstance(tick_size, str) else None,
             qty_step=qty_step if isinstance(qty_step, str) else None,
+            min_order_qty=min_order_qty if isinstance(min_order_qty, str) else None,
+            min_notional_value=(
+                min_notional_value if isinstance(min_notional_value, str) else None
+            ),
             raw=raw,
         )
 

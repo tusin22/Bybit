@@ -19,6 +19,8 @@ class FakeBybitClient:
             status="Trading",
             tick_size="0.10",
             qty_step="0.001",
+            min_order_qty="0.001",
+            min_notional_value="5",
             raw={"symbol": symbol},
         )
 
@@ -63,6 +65,8 @@ def test_signal_router_marks_signal_as_entry_eligible() -> None:
     assert enriched.instrument_status == "Trading"
     assert enriched.instrument_tick_size == "0.10"
     assert enriched.instrument_qty_step == "0.001"
+    assert enriched.instrument_min_order_qty == "0.001"
+    assert enriched.instrument_min_notional_value == "5"
     assert fake_client.instrument_calls == 1
     assert fake_client.ticker_calls == 1
 

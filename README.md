@@ -11,6 +11,7 @@ Projeto em Python para processar sinais de trade recebidos via Telegram, com evo
 - Consulta de preço atual do símbolo do sinal (escopo atual: `category=linear`).
 - Consulta de informações do instrumento/símbolo (escopo atual: `category=linear`).
 - Camada de **planejamento de execução** (`ExecutionPlan`) para normalizar preços e qty.
+- Validação pré-envio no plano para mínimos do instrumento (`minOrderQty` e `minNotionalValue`) antes de tentar `place_order`.
 - Primeira camada de **escrita restrita à Bybit testnet** para enviar **apenas ordem de entrada** (`Market`).
 - Proteções obrigatórias de execução:
   - bloqueio quando `DRY_RUN=true`;
@@ -95,11 +96,15 @@ No startup, o listener valida/resolve `TELEGRAM_SOURCE_CHAT`; se o valor for inv
   - consulta de instrumento (`linear`);
   - consulta de preço atual (`linear`);
   - captura de metadados básicos do instrumento (`status`, `tickSize`, `qtyStep`);
+  - captura de metadados de mínimos do instrumento (`minOrderQty`, `minNotionalValue`);
   - validação da janela de entrada.
 - O sinal enriquecido é convertido em `ExecutionPlan`:
   - normalização de preços por `tickSize` com regras explícitas por contexto (entrada, stop e take profit);
   - normalização de quantity por `qtyStep`;
   - cálculo de quantity por sizing fixo configurado.
+  - validação de elegibilidade por mínimos do instrumento:
+    - bloqueia quando `planned_quantity < minOrderQty`;
+    - bloqueia quando `reference_price * planned_quantity < minNotionalValue`.
 - O executor avalia proteções e elegibilidade:
   - se bloqueado por proteção, registra o motivo;
   - se elegível e desbloqueado, envia ordem de entrada `Market` em `category=linear` com one-way (`positionIdx=0`).
