@@ -18,7 +18,7 @@ class BybitOrderRequest:
 
 
 class BybitExecutionClient:
-    """Cliente Bybit V5 para envio de ordens (escopo inicial: entrada market em linear)."""
+    """Cliente Bybit V5 para envio e confirmação REST de ordens (escopo: linear)."""
 
     def __init__(self, *, api_key: str, api_secret: str, testnet: bool) -> None:
         from pybit.unified_trading import HTTP
@@ -54,6 +54,77 @@ class BybitExecutionClient:
         response = self._http.place_order(**request_payload)
         self._assert_success(response, operation="place_order")
         return response
+
+    def get_open_orders(
+        self,
+        *,
+        category: str,
+        symbol: str,
+        order_id: str | None,
+        order_link_id: str | None,
+    ) -> dict[str, object]:
+        if not self._has_auth:
+            raise BybitExecutionClientError(
+                "Credenciais Bybit ausentes: BYBIT_API_KEY e BYBIT_API_SECRET são obrigatórios para execução."
+            )
+
+        query: dict[str, object] = {
+            "category": category,
+            "symbol": symbol,
+            "openOnly": 0,
+            "limit": 1,
+        }
+        if order_id:
+            query["orderId"] = order_id
+        elif order_link_id:
+            query["orderLinkId"] = order_link_id
+
+        response = self._http.get_open_orders(**query)
+        self._assert_success(response, operation="get_open_orders")
+        return response
+
+    def get_order_history(
+        self,
+        *,
+        category: str,
+        symbol: str,
+        order_id: str | None,
+        order_link_id: str | None,
+    ) -> dict[str, object]:
+        if not self._has_auth:
+            raise BybitExecutionClientError(
+                "Credenciais Bybit ausentes: BYBIT_API_KEY e BYBIT_API_SECRET são obrigatórios para execução."
+            )
+
+        query: dict[str, object] = {
+            "category": category,
+            "symbol": symbol,
+            "limit": 1,
+        }
+        if order_id:
+            query["orderId"] = order_id
+        elif order_link_id:
+            query["orderLinkId"] = order_link_id
+
+        response = self._http.get_order_history(**query)
+        self._assert_success(response, operation="get_order_history")
+        return response
+
+    @staticmethod
+    def extract_first_order(response: dict[str, object]) -> dict[str, object] | None:
+        result = response.get("result")
+        if not isinstance(result, dict):
+            return None
+
+        raw_list = result.get("list")
+        if not isinstance(raw_list, list) or not raw_list:
+            return None
+
+        first = raw_list[0]
+        if not isinstance(first, dict):
+            return None
+
+        return first
 
     @staticmethod
     def _assert_success(response: dict[str, object], *, operation: str) -> None:

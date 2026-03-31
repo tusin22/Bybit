@@ -8,9 +8,18 @@ from src.services.trade_executor import TradeExecutionError, TradeExecutor, _for
 
 
 class FakeExecutionClient:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        open_orders_responses: list[dict[str, object]] | None = None,
+        order_history_responses: list[dict[str, object]] | None = None,
+    ) -> None:
         self.calls = 0
         self.last_order = None
+        self.open_orders_calls = 0
+        self.order_history_calls = 0
+        self._open_orders_responses = open_orders_responses or []
+        self._order_history_responses = order_history_responses or []
 
     def place_entry_market_order(self, *, order):
         self.calls += 1
@@ -23,6 +32,42 @@ class FakeExecutionClient:
                 "orderLinkId": order.order_link_id,
             },
         }
+
+    def get_open_orders(self, *, category, symbol, order_id, order_link_id):
+        self.open_orders_calls += 1
+        if self._open_orders_responses:
+            return self._open_orders_responses.pop(0)
+        return _empty_order_list_response()
+
+    def get_order_history(self, *, category, symbol, order_id, order_link_id):
+        self.order_history_calls += 1
+        if self._order_history_responses:
+            return self._order_history_responses.pop(0)
+        return _empty_order_list_response()
+
+    @staticmethod
+    def extract_first_order(response: dict[str, object]) -> dict[str, object] | None:
+        result = response.get("result")
+        if not isinstance(result, dict):
+            return None
+
+        order_list = result.get("list")
+        if not isinstance(order_list, list) or not order_list:
+            return None
+
+        first = order_list[0]
+        if not isinstance(first, dict):
+            return None
+
+        return first
+
+
+def _empty_order_list_response() -> dict[str, object]:
+    return {"retCode": 0, "retMsg": "OK", "result": {"list": []}}
+
+
+def _order_list_response(order: dict[str, object]) -> dict[str, object]:
+    return {"retCode": 0, "retMsg": "OK", "result": {"list": [order]}}
 
 
 def _settings(
@@ -139,8 +184,18 @@ def test_execute_entry_blocks_when_plan_is_not_eligible() -> None:
     assert client.calls == 0
 
 
-def test_execute_entry_sends_market_order_with_pending_confirmation() -> None:
-    client = FakeExecutionClient()
+def test_execute_entry_sends_market_order_and_confirms_after_ack() -> None:
+    client = FakeExecutionClient(
+        open_orders_responses=[
+            _order_list_response(
+                {
+                    "orderId": "abc-123",
+                    "orderLinkId": "entry-btc",
+                    "orderStatus": "New",
+                }
+            )
+        ]
+    )
     executor = TradeExecutor(
         settings=_settings(dry_run=False, enable_order_execution=True),
         execution_client=client,
@@ -150,13 +205,110 @@ def test_execute_entry_sends_market_order_with_pending_confirmation() -> None:
 
     assert result.order_attempted is True
     assert result.order_sent is True
-    assert result.order_confirmed is False
-    assert result.confirmation_status == "pending_confirmation"
-    assert result.success is False
+    assert result.order_confirmed is True
+    assert result.confirmation_status == "confirmed"
+    assert result.success is True
     assert result.bybit_response_summary["orderId"] == "abc-123"
     assert result.bybit_response_summary["requestAccepted"] is True
     assert client.calls == 1
     assert client.last_order.position_idx == 0
+
+
+def test_execute_entry_marks_timeout_when_pending_never_resolves() -> None:
+    pending = _order_list_response(
+        {
+            "orderId": "abc-123",
+            "orderLinkId": "entry-btc",
+            "orderStatus": "Created",
+        }
+    )
+    client = FakeExecutionClient(open_orders_responses=[pending, pending, pending, pending])
+    executor = TradeExecutor(
+        settings=_settings(dry_run=False, enable_order_execution=True),
+        execution_client=client,
+    )
+
+    result = executor.execute_entry(plan=_eligible_plan())
+
+    assert result.order_sent is True
+    assert result.order_confirmed is False
+    assert result.confirmation_status == "timeout"
+    assert "Timeout" in (result.confirmation_reason or "")
+
+
+def test_execute_entry_marks_not_found_when_order_is_missing() -> None:
+    client = FakeExecutionClient(
+        open_orders_responses=[
+            _empty_order_list_response(),
+            _empty_order_list_response(),
+            _empty_order_list_response(),
+            _empty_order_list_response(),
+        ],
+        order_history_responses=[
+            _empty_order_list_response(),
+            _empty_order_list_response(),
+            _empty_order_list_response(),
+            _empty_order_list_response(),
+        ],
+    )
+    executor = TradeExecutor(
+        settings=_settings(dry_run=False, enable_order_execution=True),
+        execution_client=client,
+    )
+
+    result = executor.execute_entry(plan=_eligible_plan())
+
+    assert result.order_sent is True
+    assert result.order_confirmed is False
+    assert result.confirmation_status == "not_found"
+
+
+def test_execute_entry_marks_cancelled_from_order_snapshot() -> None:
+    client = FakeExecutionClient(
+        order_history_responses=[
+            _order_list_response(
+                {
+                    "orderId": "abc-123",
+                    "orderLinkId": "entry-btc",
+                    "orderStatus": "Cancelled",
+                    "cancelType": "CancelByUser",
+                }
+            )
+        ]
+    )
+    executor = TradeExecutor(
+        settings=_settings(dry_run=False, enable_order_execution=True),
+        execution_client=client,
+    )
+
+    result = executor.execute_entry(plan=_eligible_plan())
+
+    assert result.confirmation_status == "cancelled"
+    assert result.order_confirmed is False
+
+
+def test_execute_entry_marks_rejected_from_order_snapshot() -> None:
+    client = FakeExecutionClient(
+        order_history_responses=[
+            _order_list_response(
+                {
+                    "orderId": "abc-123",
+                    "orderLinkId": "entry-btc",
+                    "orderStatus": "Rejected",
+                    "rejectReason": "EC_QTY_LESS_THAN_MIN_QTY",
+                }
+            )
+        ]
+    )
+    executor = TradeExecutor(
+        settings=_settings(dry_run=False, enable_order_execution=True),
+        execution_client=client,
+    )
+
+    result = executor.execute_entry(plan=_eligible_plan())
+
+    assert result.confirmation_status == "rejected"
+    assert "EC_QTY_LESS_THAN_MIN_QTY" in (result.confirmation_reason or "")
 
 
 def test_execute_entry_fails_clearly_when_critical_data_is_missing() -> None:
