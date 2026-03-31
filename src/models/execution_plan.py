@@ -17,6 +17,8 @@ class ExecutionPlan:
     planned_quantity: float
     tick_size: str | None
     qty_step: str | None
+    min_order_qty: str | None
+    min_notional_value: str | None
     instrument_status: str | None
     eligible: bool
     ineligibility_reason: str | None = None

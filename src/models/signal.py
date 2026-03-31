@@ -19,6 +19,8 @@ class Signal:
     instrument_status: str | None = None
     instrument_tick_size: str | None = None
     instrument_qty_step: str | None = None
+    instrument_min_order_qty: str | None = None
+    instrument_min_notional_value: str | None = None
 
     def __post_init__(self) -> None:
         normalized_side = self.side.strip().upper()

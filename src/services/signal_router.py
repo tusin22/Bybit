@@ -22,4 +22,6 @@ class SignalRouter:
         signal.instrument_status = instrument.status
         signal.instrument_tick_size = instrument.tick_size
         signal.instrument_qty_step = instrument.qty_step
+        signal.instrument_min_order_qty = instrument.min_order_qty
+        signal.instrument_min_notional_value = instrument.min_notional_value
         return signal

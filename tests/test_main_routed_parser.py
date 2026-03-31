@@ -14,6 +14,8 @@ class FakeRouter:
         signal.instrument_status = "Trading"
         signal.instrument_tick_size = "0.10"
         signal.instrument_qty_step = "0.001"
+        signal.instrument_min_order_qty = "0.001"
+        signal.instrument_min_notional_value = "5"
         return signal
 
 
@@ -32,6 +34,8 @@ class FakePlanner:
             planned_quantity=86.9,
             tick_size="0.10",
             qty_step="0.001",
+            min_order_qty="0.001",
+            min_notional_value="5",
             instrument_status="Trading",
             eligible=True,
             ineligibility_reason=None,

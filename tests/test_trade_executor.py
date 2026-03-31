@@ -63,6 +63,8 @@ def _eligible_plan() -> ExecutionPlan:
         planned_quantity=0.001,
         tick_size="0.10",
         qty_step="0.001",
+        min_order_qty="0.001",
+        min_notional_value="5",
         instrument_status="Trading",
         eligible=True,
         ineligibility_reason=None,

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_DOWN, ROUND_UP
+import logging
 
 from src.config import Settings
 from src.models.execution_plan import ExecutionPlan
 from src.models.signal import Signal
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ExecutionPlanningError(ValueError):
@@ -35,6 +38,8 @@ class ExecutionPlanner:
 
         tick_size = signal.instrument_tick_size
         qty_step = signal.instrument_qty_step
+        min_order_qty = signal.instrument_min_order_qty
+        min_notional_value = signal.instrument_min_notional_value
         instrument_status = signal.instrument_status
 
         if instrument_status != "Trading":
@@ -45,12 +50,20 @@ class ExecutionPlanner:
                 reason="Instrumento inelegível: status diferente de Trading.",
             )
 
-        if tick_size is None or qty_step is None:
+        if (
+            tick_size is None
+            or qty_step is None
+            or min_order_qty is None
+            or min_notional_value is None
+        ):
             return self._ineligible_plan(
                 signal=signal,
                 planned_side=planned_side,
                 reference_price=reference_price,
-                reason="Metadado crítico ausente: tickSize e/ou qtyStep.",
+                reason=(
+                    "Metadado crítico ausente: tickSize, qtyStep, "
+                    "minOrderQty e/ou minNotionalValue."
+                ),
             )
 
         if signal.current_price is None:
@@ -115,6 +128,61 @@ class ExecutionPlanner:
                 reason="Quantidade planejada inválida após normalização (<= 0).",
             )
 
+        try:
+            min_order_qty_decimal = _to_decimal(
+                min_order_qty,
+                field_name="minOrderQty",
+            )
+            min_notional_decimal = _to_decimal(
+                min_notional_value,
+                field_name="minNotionalValue",
+            )
+        except ExecutionPlanningError as exc:
+            return self._ineligible_plan(
+                signal=signal,
+                planned_side=planned_side,
+                reference_price=reference_price,
+                reason=str(exc),
+            )
+
+        if Decimal(str(planned_quantity)) < min_order_qty_decimal:
+            reason = (
+                "Quantidade abaixo de minOrderQty: "
+                f"planned_quantity={planned_quantity} < minOrderQty={min_order_qty}."
+            )
+            self._log_instrument_minimum_ineligibility(
+                signal=signal,
+                reference_price=reference_price,
+                planned_quantity=planned_quantity,
+                reason=reason,
+            )
+            return self._ineligible_plan(
+                signal=signal,
+                planned_side=planned_side,
+                reference_price=reference_price,
+                reason=reason,
+            )
+
+        planned_notional = Decimal(str(reference_price)) * Decimal(str(planned_quantity))
+        if planned_notional < min_notional_decimal:
+            reason = (
+                "Valor nocional abaixo de minNotionalValue: "
+                f"planned_notional={float(planned_notional)} "
+                f"< minNotionalValue={min_notional_value}."
+            )
+            self._log_instrument_minimum_ineligibility(
+                signal=signal,
+                reference_price=reference_price,
+                planned_quantity=planned_quantity,
+                reason=reason,
+            )
+            return self._ineligible_plan(
+                signal=signal,
+                planned_side=planned_side,
+                reference_price=reference_price,
+                reason=reason,
+            )
+
         if normalized_entry_min > normalized_entry_max:
             return self._ineligible_plan(
                 signal=signal,
@@ -136,6 +204,8 @@ class ExecutionPlanner:
             planned_quantity=planned_quantity,
             tick_size=tick_size,
             qty_step=qty_step,
+            min_order_qty=min_order_qty,
+            min_notional_value=min_notional_value,
             instrument_status=instrument_status,
             eligible=True,
             ineligibility_reason=None,
@@ -226,9 +296,30 @@ class ExecutionPlanner:
             planned_quantity=0.0,
             tick_size=tick_size,
             qty_step=qty_step,
+            min_order_qty=signal.instrument_min_order_qty,
+            min_notional_value=signal.instrument_min_notional_value,
             instrument_status=signal.instrument_status,
             eligible=False,
             ineligibility_reason=reason,
+        )
+
+    def _log_instrument_minimum_ineligibility(
+        self,
+        *,
+        signal: Signal,
+        reference_price: float,
+        planned_quantity: float,
+        reason: str,
+    ) -> None:
+        LOGGER.info(
+            "Plano inelegível por mínimos do instrumento. symbol=%s category=%s planned_quantity=%s reference_price=%s minOrderQty=%s minNotionalValue=%s reason=%s",
+            signal.symbol,
+            "linear",
+            planned_quantity,
+            reference_price,
+            signal.instrument_min_order_qty,
+            signal.instrument_min_notional_value,
+            reason,
         )
 
 
