@@ -17,6 +17,14 @@ class BybitOrderRequest:
     order_link_id: str | None = None
 
 
+@dataclass(slots=True)
+class BybitSetTradingStopRequest:
+    category: str
+    symbol: str
+    stop_loss: str
+    position_idx: int
+
+
 class BybitExecutionClient:
     """Cliente Bybit V5 para envio e confirmação REST de ordens (escopo: linear)."""
 
@@ -53,6 +61,27 @@ class BybitExecutionClient:
 
         response = self._http.place_order(**request_payload)
         self._assert_success(response, operation="place_order")
+        return response
+
+    def set_trading_stop(self, *, request: BybitSetTradingStopRequest) -> dict[str, object]:
+        if not self._has_auth:
+            raise BybitExecutionClientError(
+                "Credenciais Bybit ausentes: BYBIT_API_KEY e BYBIT_API_SECRET são obrigatórios para execução."
+            )
+
+        if request.category != "linear":
+            raise BybitExecutionClientError(
+                "Categoria inválida para esta fase de execução: apenas linear é suportada."
+            )
+
+        response = self._http.set_trading_stop(
+            category=request.category,
+            symbol=request.symbol,
+            tpslMode="Full",
+            stopLoss=request.stop_loss,
+            positionIdx=request.position_idx,
+        )
+        self._assert_success(response, operation="set_trading_stop")
         return response
 
     def get_open_orders(

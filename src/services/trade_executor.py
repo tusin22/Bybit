@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import logging
+import math
 import time
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-import logging
 
-from src.bybit.execution_client import BybitExecutionClient, BybitOrderRequest
+from src.bybit.execution_client import (
+    BybitExecutionClient,
+    BybitExecutionClientError,
+    BybitOrderRequest,
+    BybitSetTradingStopRequest,
+)
 from src.config import Settings
 from src.models.execution_plan import ExecutionPlan
 from src.models.execution_result import ConfirmationStatus, ExecutionResult
@@ -19,6 +25,7 @@ _PENDING_STATUSES = {"Created", "Untriggered", "Triggered"}
 _CONFIRMED_STATUSES = {"New", "PartiallyFilled", "Filled"}
 _REJECTED_STATUSES = {"Rejected"}
 _CANCELLED_STATUSES = {"Cancelled", "Deactivated", "PartiallyFilledCanceled"}
+_ONE_WAY_POSITION_IDX = 0
 
 
 class TradeExecutionError(ValueError):
@@ -36,6 +43,7 @@ class _ExecutionFlags:
 class _ConfirmationState:
     status: ConfirmationStatus
     reason: str | None
+    order_status: str | None
 
 
 class TradeExecutor:
@@ -102,7 +110,7 @@ class TradeExecutor:
                 symbol=plan.symbol,
                 side=plan.planned_entry_side,
                 qty=order_qty,
-                position_idx=0,
+                position_idx=_ONE_WAY_POSITION_IDX,
                 order_link_id=client_order_context,
             )
         )
@@ -130,6 +138,69 @@ class TradeExecutor:
             confirmation.reason,
         )
 
+        sl_response_summary: dict[str, object] = {}
+        sl_attempted = False
+        sl_configured = False
+        sl_status = "not_attempted"
+        sl_reason: str | None = None
+
+        if (
+            order_confirmed
+            and _is_position_ready_for_stop_loss(confirmation.order_status)
+            and plan.eligible
+            and _has_normalized_stop_loss(plan.normalized_stop_loss)
+        ):
+            sl_attempted = True
+            normalized_stop_loss = _format_price(plan.normalized_stop_loss)
+            try:
+                sl_response = self._execution_client.set_trading_stop(
+                    request=BybitSetTradingStopRequest(
+                        category=plan.category,
+                        symbol=plan.symbol,
+                        stop_loss=normalized_stop_loss,
+                        position_idx=_ONE_WAY_POSITION_IDX,
+                    )
+                )
+                sl_response_summary = _build_stop_loss_summary(sl_response)
+                sl_configured = True
+                sl_status = "configured"
+                sl_reason = None
+            except BybitExecutionClientError as exc:
+                sl_response_summary = {
+                    "requestAccepted": False,
+                    "error": str(exc),
+                }
+                sl_configured = False
+                sl_status = "failed"
+                sl_reason = str(exc)
+
+            LOGGER.info(
+                "Configuração de stop loss pós-confirmação concluída. symbol=%s category=%s side=%s orderId=%s orderLinkId=%s normalized_stop_loss=%s positionIdx=%s stop_loss_status=%s reason=%s",
+                plan.symbol,
+                plan.category,
+                plan.planned_entry_side,
+                summary.get("orderId"),
+                summary.get("orderLinkId"),
+                normalized_stop_loss,
+                _ONE_WAY_POSITION_IDX,
+                sl_status,
+                sl_reason,
+            )
+        else:
+            LOGGER.info(
+                "Configuração de stop loss não acionada. symbol=%s category=%s side=%s orderId=%s orderLinkId=%s normalized_stop_loss=%s positionIdx=%s confirmation_status=%s order_status=%s plan_eligible=%s",
+                plan.symbol,
+                plan.category,
+                plan.planned_entry_side,
+                summary.get("orderId"),
+                summary.get("orderLinkId"),
+                plan.normalized_stop_loss,
+                _ONE_WAY_POSITION_IDX,
+                confirmation.status,
+                confirmation.order_status,
+                plan.eligible,
+            )
+
         return ExecutionResult(
             symbol=plan.symbol,
             category=plan.category,
@@ -137,6 +208,10 @@ class TradeExecutor:
             order_attempted=True,
             order_sent=True,
             order_confirmed=order_confirmed,
+            stop_loss_attempted=sl_attempted,
+            stop_loss_configured=sl_configured,
+            stop_loss_status=sl_status,
+            stop_loss_reason=sl_reason,
             blocked_by_dry_run=False,
             blocked_by_execution_flag=False,
             blocked_by_testnet_guard=False,
@@ -144,8 +219,9 @@ class TradeExecutor:
             confirmation_status=confirmation.status,
             confirmation_reason=confirmation.reason,
             bybit_response_summary=summary,
+            stop_loss_response_summary=sl_response_summary,
             client_order_context=client_order_context,
-            success=order_confirmed,
+            success=order_confirmed and (not sl_attempted or sl_configured),
         )
 
     def _validate_critical_data(self, *, plan: ExecutionPlan) -> None:
@@ -218,15 +294,15 @@ class TradeExecutor:
                 )
 
                 if mapped_status == "confirmed":
-                    return _ConfirmationState(status="confirmed", reason="orderStatus confirmado via REST")
+                    return _ConfirmationState(status="confirmed", reason="orderStatus confirmado via REST", order_status=status)
 
                 if mapped_status == "rejected":
                     reason = rejection_reason or "Ordem rejeitada conforme orderStatus da Bybit."
-                    return _ConfirmationState(status="rejected", reason=reason)
+                    return _ConfirmationState(status="rejected", reason=reason, order_status=status)
 
                 if mapped_status == "cancelled":
                     reason = cancel_type or "Ordem cancelada conforme orderStatus da Bybit."
-                    return _ConfirmationState(status="cancelled", reason=reason)
+                    return _ConfirmationState(status="cancelled", reason=reason, order_status=status)
 
                 seen_pending = True
 
@@ -237,17 +313,20 @@ class TradeExecutor:
             return _ConfirmationState(
                 status="not_found",
                 reason="Ordem não encontrada em open orders e history dentro da janela de confirmação.",
+                order_status=None,
             )
 
         if seen_pending:
             return _ConfirmationState(
                 status="timeout",
                 reason="Timeout aguardando transição de orderStatus para estado final confirmado/rejeitado/cancelado.",
+                order_status=None,
             )
 
         return _ConfirmationState(
             status="pending_confirmation",
             reason="ACK recebido, porém sem confirmação conclusiva nesta fase.",
+            order_status=None,
         )
 
     def _fetch_order_snapshot(
@@ -292,6 +371,10 @@ class TradeExecutor:
             order_attempted=False,
             order_sent=False,
             order_confirmed=False,
+            stop_loss_attempted=False,
+            stop_loss_configured=False,
+            stop_loss_status="not_attempted",
+            stop_loss_reason=None,
             blocked_by_dry_run=blocked_by_dry_run,
             blocked_by_execution_flag=blocked_by_execution_flag,
             blocked_by_testnet_guard=blocked_by_testnet_guard,
@@ -299,6 +382,7 @@ class TradeExecutor:
             confirmation_status="not_sent",
             confirmation_reason=reason,
             bybit_response_summary={},
+            stop_loss_response_summary={},
             client_order_context=None,
             success=False,
         )
@@ -320,6 +404,18 @@ def _format_qty(quantity: float, *, qty_step: str | None) -> str:
     return format(decimal_quantity.quantize(decimal_step), "f")
 
 
+def _format_price(value: float) -> str:
+    return format(Decimal(str(value)).normalize(), "f")
+
+
+def _has_normalized_stop_loss(value: float) -> bool:
+    return math.isfinite(value) and value > 0
+
+
+def _is_position_ready_for_stop_loss(order_status: str | None) -> bool:
+    return order_status in {"PartiallyFilled", "Filled"}
+
+
 def _build_response_summary(response: dict[str, object]) -> dict[str, object]:
     result = response.get("result")
     result_dict = result if isinstance(result, dict) else {}
@@ -329,6 +425,14 @@ def _build_response_summary(response: dict[str, object]) -> dict[str, object]:
         "retMsg": response.get("retMsg"),
         "orderId": result_dict.get("orderId"),
         "orderLinkId": result_dict.get("orderLinkId"),
+        "requestAccepted": response.get("retCode") == 0,
+    }
+
+
+def _build_stop_loss_summary(response: dict[str, object]) -> dict[str, object]:
+    return {
+        "retCode": response.get("retCode"),
+        "retMsg": response.get("retMsg"),
         "requestAccepted": response.get("retCode") == 0,
     }
 

@@ -13,6 +13,12 @@ ConfirmationStatus = Literal[
     "timeout",
 ]
 
+StopLossStatus = Literal[
+    "not_attempted",
+    "configured",
+    "failed",
+]
+
 
 @dataclass(slots=True)
 class ExecutionResult:
@@ -22,6 +28,10 @@ class ExecutionResult:
     order_attempted: bool
     order_sent: bool
     order_confirmed: bool
+    stop_loss_attempted: bool
+    stop_loss_configured: bool
+    stop_loss_status: StopLossStatus
+    stop_loss_reason: str | None
     blocked_by_dry_run: bool
     blocked_by_execution_flag: bool
     blocked_by_testnet_guard: bool
@@ -29,6 +39,7 @@ class ExecutionResult:
     confirmation_status: ConfirmationStatus
     confirmation_reason: str | None
     bybit_response_summary: dict[str, object]
+    stop_loss_response_summary: dict[str, object]
     client_order_context: str | None
     success: bool
 
