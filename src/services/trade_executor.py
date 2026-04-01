@@ -101,6 +101,8 @@ class _ExecutionMonitorResult:
     cleanup_completed_within_window: bool
     remaining_execution_orders: list[dict[str, object]]
     status: str
+    final_decision_source: str | None
+    final_decision_reason: str | None
     cleanup_status: str
     cleanup_found_count: int
     cleanup_cancelled_count: int
@@ -422,6 +424,8 @@ class TradeExecutor:
             cleanup_completed_within_window=False,
             remaining_execution_orders=[],
             status="not_started",
+            final_decision_source=None,
+            final_decision_reason=None,
             cleanup_status="not_attempted",
             cleanup_found_count=0,
             cleanup_cancelled_count=0,
@@ -502,6 +506,8 @@ class TradeExecutor:
             monitor_cleanup_completed_within_window=execution_monitor.cleanup_completed_within_window,
             monitor_remaining_execution_orders=execution_monitor.remaining_execution_orders,
             monitor_status=execution_monitor.status,
+            monitor_final_decision_source=execution_monitor.final_decision_source,
+            monitor_final_decision_reason=execution_monitor.final_decision_reason,
             blocked_by_dry_run=False,
             blocked_by_execution_flag=False,
             blocked_by_testnet_guard=False,
@@ -556,7 +562,7 @@ class TradeExecutor:
                 ws_authenticated = ws_result.authenticated
                 ws_subscribed = ws_result.subscribed
                 LOGGER.info(
-                    "Monitor websocket privado finalizado. symbol=%s category=%s side=%s connected=%s authenticated=%s subscribed=%s events_received=%s reason=%s position_closed=%s",
+                    "Monitor websocket privado finalizado. symbol=%s category=%s side=%s connected=%s authenticated=%s subscribed=%s events_received=%s reason=%s position_closed=%s order_complementary_events=%s position_decision=%s",
                     symbol,
                     category,
                     side,
@@ -566,6 +572,8 @@ class TradeExecutor:
                     ws_result.events_received,
                     ws_result.reason,
                     ws_result.position_closed_confirmed,
+                    len(ws_result.matched_order_events),
+                    ws_result.position_decision,
                 )
                 if ws_result.position_closed_confirmed:
                     return self._cleanup_after_position_closed(
@@ -581,13 +589,18 @@ class TradeExecutor:
                         websocket_authenticated=ws_authenticated,
                         websocket_subscribed=ws_subscribed,
                         rest_fallback_used=False,
+                        final_decision_source=ws_result.decision_source,
+                        final_decision_reason=ws_result.reason,
                     )
                 rest_fallback_used = True
                 LOGGER.warning(
-                    "Fallback REST acionado: websocket sem confirmação final dentro da janela. symbol=%s category=%s side=%s",
+                    "Fallback REST acionado: websocket sem confirmação conclusiva por position. symbol=%s category=%s side=%s ws_reason=%s position_confirmed=%s order_complementary_events=%s",
                     symbol,
                     category,
                     side,
+                    ws_result.reason,
+                    ws_result.position_decision != "inconclusive",
+                    len(ws_result.matched_order_events),
                 )
             except BybitPrivateWsMonitorError as exc:
                 rest_fallback_used = True
@@ -629,6 +642,8 @@ class TradeExecutor:
                     cleanup_completed_within_window=False,
                     remaining_execution_orders=[],
                     status="started_failed_with_safe_fallback",
+                    final_decision_source="rest_position_error",
+                    final_decision_reason=str(exc),
                     cleanup_status="failed",
                     cleanup_found_count=0,
                     cleanup_cancelled_count=0,
@@ -660,6 +675,8 @@ class TradeExecutor:
                 cleanup_completed_within_window=False,
                 remaining_execution_orders=remaining_orders,
                 status="started_window_expired",
+                final_decision_source="rest_position_inconclusive",
+                final_decision_reason="rest_window_expired_without_closed_position",
                 cleanup_status="position_not_closed_in_window",
                 cleanup_found_count=len(remaining_orders),
                 cleanup_cancelled_count=0,
@@ -681,6 +698,8 @@ class TradeExecutor:
             websocket_authenticated=ws_authenticated,
             websocket_subscribed=ws_subscribed,
             rest_fallback_used=rest_fallback_used,
+            final_decision_source="rest_position",
+            final_decision_reason="position_closed_via_rest",
         )
 
     def _cleanup_after_position_closed(
@@ -698,6 +717,8 @@ class TradeExecutor:
         websocket_authenticated: bool,
         websocket_subscribed: bool,
         rest_fallback_used: bool,
+        final_decision_source: str | None,
+        final_decision_reason: str | None,
     ) -> _ExecutionMonitorResult:
         failures: list[dict[str, object]] = []
         remaining_tp_orders: list[dict[str, object]] = []
@@ -729,6 +750,8 @@ class TradeExecutor:
                 cleanup_completed_within_window=True,
                 remaining_execution_orders=[],
                 status="started_position_closed_cleanup_done",
+                final_decision_source=final_decision_source,
+                final_decision_reason=final_decision_reason,
                 cleanup_status="not_needed",
                 cleanup_found_count=0,
                 cleanup_cancelled_count=0,
@@ -776,6 +799,8 @@ class TradeExecutor:
             cleanup_completed_within_window=cleanup_completed,
             remaining_execution_orders=remaining_after_cleanup,
             status=("started_position_closed_cleanup_done" if cleanup_completed else "started_failed_with_safe_fallback"),
+            final_decision_source=final_decision_source,
+            final_decision_reason=final_decision_reason,
             cleanup_status=cleanup_status,
             cleanup_found_count=found_count,
             cleanup_cancelled_count=cancelled_count,
@@ -1138,6 +1163,8 @@ class TradeExecutor:
             monitor_cleanup_completed_within_window=False,
             monitor_remaining_execution_orders=[],
             monitor_status="not_started",
+            monitor_final_decision_source=None,
+            monitor_final_decision_reason=None,
             blocked_by_dry_run=blocked_by_dry_run,
             blocked_by_execution_flag=blocked_by_execution_flag,
             blocked_by_testnet_guard=blocked_by_testnet_guard,

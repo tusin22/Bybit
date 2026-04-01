@@ -25,6 +25,7 @@ Projeto em Python para processar sinais de trade recebidos via Telegram, com evo
 - Limpeza incremental de ordens penduradas com foco nos IDs de TP da execução atual (REST curto e controlado, sem monitor contínuo).
 - Monitor curto da execução atual após entrada+proteções para acompanhar fechamento da posição e concluir cleanup com janela limitada.
 - Monitor curto preferencial via **websocket privado Bybit V5** (`order` e `position`) restrito à execução atual, com fallback REST seguro.
+- No monitor websocket-first desta fase, `position` é a fonte de verdade para fechamento final; `order` é apenas complementar para telemetria/rastreio da execução atual.
 - **Sem trailing stop nesta fase**.
 - **Sem monitor contínuo global de posição nesta fase**.
 - Confirmação pós-ACK implementada com polling REST curto e controlado (sem websocket).
@@ -137,7 +138,8 @@ No startup, o listener valida/resolve `TELEGRAM_SOURCE_CHAT`; se o valor for inv
 - Após confirmação e configuração de proteção, há um monitor curto da execução atual:
   - usa os IDs da entrada e dos TPs aceitos desta execução;
   - tenta confirmar fechamento via websocket privado (`order` e `position`) para a execução atual;
-  - se o websocket não confirmar estado final na janela curta, aciona fallback REST seguro (`Get Position Info`, `Get Open & Closed Orders`, `Get Order History`);
+  - considera fechamento final apenas quando `position` confirmar (fonte de verdade); evento `order` isolado não encerra posição;
+  - se websocket ficar inconclusivo para `position` (mesmo com `order` relevante), aciona fallback REST cedo e explícito (`Get Position Info`, `Get Open & Closed Orders`, `Get Order History`);
   - se detectar posição fechada dentro da janela, aciona cleanup para cancelar apenas TPs remanescentes desta execução;
   - registra tentativas, status final do monitor e ordens remanescentes no `ExecutionResult`;
   - encerra com timeout explícito quando a posição não fecha na janela curta.
