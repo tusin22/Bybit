@@ -183,6 +183,76 @@ class BybitExecutionClient:
         self._assert_success(response, operation="get_order_history")
         return response
 
+    def get_positions(
+        self,
+        *,
+        category: str,
+        symbol: str,
+    ) -> dict[str, object]:
+        if not self._has_auth:
+            raise BybitExecutionClientError(
+                "Credenciais Bybit ausentes: BYBIT_API_KEY e BYBIT_API_SECRET são obrigatórios para execução."
+            )
+
+        response = self._http.get_positions(
+            category=category,
+            symbol=symbol,
+        )
+        self._assert_success(response, operation="get_positions")
+        return response
+
+    def get_open_orders_for_symbol(
+        self,
+        *,
+        category: str,
+        symbol: str,
+        limit: int = 50,
+    ) -> dict[str, object]:
+        if not self._has_auth:
+            raise BybitExecutionClientError(
+                "Credenciais Bybit ausentes: BYBIT_API_KEY e BYBIT_API_SECRET são obrigatórios para execução."
+            )
+
+        response = self._http.get_open_orders(
+            category=category,
+            symbol=symbol,
+            openOnly=0,
+            limit=limit,
+        )
+        self._assert_success(response, operation="get_open_orders")
+        return response
+
+    def cancel_order(
+        self,
+        *,
+        category: str,
+        symbol: str,
+        order_id: str | None,
+        order_link_id: str | None,
+    ) -> dict[str, object]:
+        if not self._has_auth:
+            raise BybitExecutionClientError(
+                "Credenciais Bybit ausentes: BYBIT_API_KEY e BYBIT_API_SECRET são obrigatórios para execução."
+            )
+
+        if not order_id and not order_link_id:
+            raise BybitExecutionClientError(
+                "Parâmetros inválidos para cancelamento: informe order_id ou order_link_id."
+            )
+
+        payload: dict[str, object] = {
+            "category": category,
+            "symbol": symbol,
+        }
+        if order_id:
+            payload["orderId"] = order_id
+        elif order_link_id:
+            payload["orderLinkId"] = order_link_id
+
+        response = self._http.cancel_order(**payload)
+        self._assert_success(response, operation="cancel_order")
+        return response
+
     @staticmethod
     def extract_first_order(response: dict[str, object]) -> dict[str, object] | None:
         result = response.get("result")
@@ -198,6 +268,18 @@ class BybitExecutionClient:
             return None
 
         return first
+
+    @staticmethod
+    def extract_order_list(response: dict[str, object]) -> list[dict[str, object]]:
+        result = response.get("result")
+        if not isinstance(result, dict):
+            return []
+
+        raw_list = result.get("list")
+        if not isinstance(raw_list, list):
+            return []
+
+        return [item for item in raw_list if isinstance(item, dict)]
 
     @staticmethod
     def _assert_success(response: dict[str, object], *, operation: str) -> None:

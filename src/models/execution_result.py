@@ -26,12 +26,22 @@ TakeProfitStatus = Literal[
     "failed",
 ]
 
+CleanupStatus = Literal[
+    "not_attempted",
+    "position_not_closed_in_window",
+    "not_needed",
+    "cancelled_all",
+    "partial",
+    "failed",
+]
+
 
 @dataclass(slots=True)
 class ExecutionResult:
     symbol: str
     category: str
     side: str
+    entry_status: ConfirmationStatus
     order_attempted: bool
     order_sent: bool
     order_confirmed: bool
@@ -45,7 +55,19 @@ class ExecutionResult:
     take_profit_accepted_count: int
     take_profit_failed_count: int
     take_profit_failures: list[dict[str, object]]
+    registered_take_profit_orders: list[dict[str, object]]
     take_profit_reconciliation_summary: dict[str, object]
+    cleanup_attempted: bool
+    cleanup_status: CleanupStatus
+    cleanup_position_exists: bool | None
+    cleanup_position_closed_within_window: bool
+    cleanup_window_attempts: int
+    cleanup_remaining_registered_tp_count: int
+    cleanup_missing_registered_tp_count: int
+    cleanup_found_count: int
+    cleanup_cancelled_count: int
+    cleanup_failed_count: int
+    cleanup_failure_reasons: list[dict[str, object]]
     blocked_by_dry_run: bool
     blocked_by_execution_flag: bool
     blocked_by_testnet_guard: bool
