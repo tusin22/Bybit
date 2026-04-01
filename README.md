@@ -20,8 +20,8 @@ Projeto em Python para processar sinais de trade recebidos via Telegram, com evo
   - bloqueio quando `ExecutionPlan` não for elegível.
 - Log estruturado do resultado da tentativa de execução (`ExecutionResult`).
 - Em falha de parsing, log de erro claro e continuidade do loop.
-- Proteção inicial pós-confirmação: configuração automática de **stop loss** na posição via `Set Trading Stop` (sem take profit).
-- **Sem reduceOnly nesta fase**.
+- Proteção pós-confirmação: configuração automática de **stop loss** na posição via `Set Trading Stop`.
+- Take profits parciais pós-confirmação com **4 ordens Limit** separadas em `category=linear`, `positionIdx=0`, `reduceOnly=true` (distribuição configurável por `.env`).
 - **Sem trailing stop nesta fase**.
 - **Sem monitor contínuo de posição e sem websocket nesta fase**.
 - Confirmação pós-ACK implementada com polling REST curto e controlado (sem websocket).
@@ -79,6 +79,12 @@ cp .env.example .env
 - `EXECUTION_SIZING_MODE=fixed_notional_usdt` (padrão e recomendado nesta fase).
 - `EXECUTION_FIXED_NOTIONAL_USDT` (ex.: `25`), usado com `fixed_notional_usdt`.
 - `EXECUTION_FIXED_QTY` (ex.: `0.01`), usado apenas com `fixed_qty`.
+- Distribuição dos 4 TPs parciais:
+  - `TP1_PERCENT` (padrão `50`)
+  - `TP2_PERCENT` (padrão `20`)
+  - `TP3_PERCENT` (padrão `20`)
+  - `TP4_PERCENT` (padrão `10`)
+  - regra obrigatória: soma = `100`.
 
 ## Executar listener
 
@@ -114,10 +120,19 @@ No startup, o listener valida/resolve `TELEGRAM_SOURCE_CHAT`; se o valor for inv
   - submissão aceita pela API (`order_sent` / ACK inicial);
   - confirmação pós-ACK (`order_confirmed`) via REST com status explícito: `pending_confirmation`, `confirmed`, `rejected`, `cancelled`, `not_found` ou `timeout`.
 - Após confirmação da entrada (`confirmation_status=confirmed`), o executor só arma `stopLoss` quando o `orderStatus` observado indica posição aberta (`PartiallyFilled` ou `Filled`) em one-way (`positionIdx=0`) via REST em `category=linear`.
-- O resultado estruturado (`ExecutionResult`) agora separa explicitamente:
+- Na mesma condição de confirmação+posição pronta, o executor envia 4 TPs parciais como ordens `Limit` `reduceOnly=true`:
+  - LONG: TPs enviados como `Sell`;
+  - SHORT: TPs enviados como `Buy`.
+- Após normalização por `qtyStep`, o executor reconcilia resíduo de quantidade de forma conservadora:
+  - tenta alocar resíduo no último TP sem exceder `planned_quantity`;
+  - se não for possível alocar com segurança por `qtyStep`, registra o resíduo explicitamente.
+- O resultado estruturado (`ExecutionResult`) separa explicitamente:
   - confirmação da entrada;
-  - tentativa de configuração do stop loss;
-  - sucesso/falha da configuração de stop loss.
+  - status de configuração do stop loss;
+  - status dos take profits (tentados, aceitos, falhos e razões por TP), incluindo resumo de reconciliação das quantidades.
+- Interpretação de `success` no resultado final:
+  - `True` apenas quando entrada está confirmada, stop loss (quando tentado) foi configurado e TPs (quando tentados) não tiveram falhas;
+  - `False` quando entrada não confirma, stop loss falha ou qualquer TP falha (parcial/total).
 
 ## Rodar testes
 

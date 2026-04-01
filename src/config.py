@@ -23,6 +23,11 @@ class Settings:
     execution_sizing_mode: str
     execution_fixed_notional_usdt: float
     execution_fixed_qty: float
+    tp1_percent: float
+    tp2_percent: float
+    tp3_percent: float
+    tp4_percent: float
+
 
 
 def _parse_bool(value: str | None, default: bool = True) -> bool:
@@ -31,11 +36,14 @@ def _parse_bool(value: str | None, default: bool = True) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+
 def _require_env(name: str) -> str:
     value = os.getenv(name)
     if value is None or not value.strip():
         raise ValueError(f"Variável obrigatória ausente ou vazia: {name}")
     return value.strip()
+
+
 
 def _parse_float_env(name: str, *, default: float | None = None) -> float:
     raw = os.getenv(name)
@@ -50,6 +58,7 @@ def _parse_float_env(name: str, *, default: float | None = None) -> float:
         raise ValueError(f"Variável {name} deve ser um número válido.") from exc
 
 
+
 def _parse_int_env(name: str) -> int:
     value = _require_env(name)
     try:
@@ -58,9 +67,29 @@ def _parse_int_env(name: str) -> int:
         raise ValueError(f"Variável {name} deve ser um inteiro válido.") from exc
 
 
+
+def _validate_tp_distribution(tp_percents: tuple[float, float, float, float]) -> None:
+    if any(percent < 0 for percent in tp_percents):
+        raise ValueError("Configuração inválida de TPs: percentuais não podem ser negativos.")
+
+    total = sum(tp_percents)
+    if abs(total - 100.0) > 1e-9:
+        raise ValueError(
+            "Configuração inválida de TPs: a soma de TP1_PERCENT, TP2_PERCENT, "
+            f"TP3_PERCENT e TP4_PERCENT deve ser 100. Recebido: {total}."
+        )
+
+
+
 def load_settings() -> Settings:
     env_path = Path(__file__).resolve().parents[1] / ".env"
     load_dotenv(dotenv_path=env_path, override=False)
+
+    tp1_percent = _parse_float_env("TP1_PERCENT", default=50.0)
+    tp2_percent = _parse_float_env("TP2_PERCENT", default=20.0)
+    tp3_percent = _parse_float_env("TP3_PERCENT", default=20.0)
+    tp4_percent = _parse_float_env("TP4_PERCENT", default=10.0)
+    _validate_tp_distribution((tp1_percent, tp2_percent, tp3_percent, tp4_percent))
 
     return Settings(
         env=os.getenv("ENV", "development"),
@@ -86,4 +115,8 @@ def load_settings() -> Settings:
             default=25.0,
         ),
         execution_fixed_qty=_parse_float_env("EXECUTION_FIXED_QTY", default=0.0),
+        tp1_percent=tp1_percent,
+        tp2_percent=tp2_percent,
+        tp3_percent=tp3_percent,
+        tp4_percent=tp4_percent,
     )

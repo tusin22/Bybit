@@ -19,6 +19,13 @@ StopLossStatus = Literal[
     "failed",
 ]
 
+TakeProfitStatus = Literal[
+    "not_attempted",
+    "all_configured",
+    "partial",
+    "failed",
+]
+
 
 @dataclass(slots=True)
 class ExecutionResult:
@@ -32,6 +39,13 @@ class ExecutionResult:
     stop_loss_configured: bool
     stop_loss_status: StopLossStatus
     stop_loss_reason: str | None
+    take_profit_attempted: bool
+    take_profit_status: TakeProfitStatus
+    take_profit_attempted_count: int
+    take_profit_accepted_count: int
+    take_profit_failed_count: int
+    take_profit_failures: list[dict[str, object]]
+    take_profit_reconciliation_summary: dict[str, object]
     blocked_by_dry_run: bool
     blocked_by_execution_flag: bool
     blocked_by_testnet_guard: bool
@@ -40,6 +54,7 @@ class ExecutionResult:
     confirmation_reason: str | None
     bybit_response_summary: dict[str, object]
     stop_loss_response_summary: dict[str, object]
+    take_profit_response_summaries: list[dict[str, object]]
     client_order_context: str | None
     success: bool
 

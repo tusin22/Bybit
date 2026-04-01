@@ -32,6 +32,10 @@ def _settings(
         execution_sizing_mode=mode,
         execution_fixed_notional_usdt=fixed_notional_usdt,
         execution_fixed_qty=fixed_qty,
+        tp1_percent=50.0,
+        tp2_percent=20.0,
+        tp3_percent=20.0,
+        tp4_percent=10.0,
     )
 
 
