@@ -140,6 +140,8 @@ class StopLossFailingButSafeExecutor:
             monitor_cleanup_completed_within_window=False,
             monitor_remaining_execution_orders=[{"tpIndex": 2, "orderId": "tp-2", "orderStatus": "New"}],
             monitor_status="started_failed_with_safe_fallback",
+            monitor_final_decision_source="websocket_position",
+            monitor_final_decision_reason="position_closed_via_private_ws",
             blocked_by_dry_run=False,
             blocked_by_execution_flag=False,
             blocked_by_testnet_guard=False,

@@ -160,9 +160,20 @@ class FakeExecutionClient:
 
 
 class FakePrivateWsMonitor:
-    def __init__(self, *, should_close_position: bool, should_fail: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        should_close_position: bool,
+        should_fail: bool = False,
+        reason: str = "fake",
+        has_order_events: bool = False,
+        position_decision: str = "inconclusive",
+    ) -> None:
         self.should_close_position = should_close_position
         self.should_fail = should_fail
+        self.reason = reason
+        self.has_order_events = has_order_events
+        self.position_decision = position_decision
         self.calls = 0
 
     def run_window(
@@ -183,6 +194,7 @@ class FakePrivateWsMonitor:
 
             raise BybitPrivateWsMonitorError("websocket down")
         from src.bybit.private_execution_ws import PrivateWsWindowResult
+        from src.bybit.private_execution_ws import PrivateWsOrderEvent
 
         return PrivateWsWindowResult(
             started=True,
@@ -191,8 +203,14 @@ class FakePrivateWsMonitor:
             subscribed=True,
             events_received=1,
             position_closed_confirmed=self.should_close_position,
-            reason="fake",
-            matched_order_events=[],
+            reason=self.reason,
+            matched_order_events=(
+                [PrivateWsOrderEvent(order_id="tp-1", order_link_id="tp1-btcusdt-abc", order_status="Filled")]
+                if self.has_order_events
+                else []
+            ),
+            decision_source=("websocket_position" if self.should_close_position else "websocket_position_inconclusive"),
+            position_decision=self.position_decision,
         )
 
 
@@ -568,6 +586,7 @@ def test_cleanup_does_not_cancel_when_position_still_open() -> None:
     assert result.cleanup_cancelled_count == 0
     assert result.monitor_started is True
     assert result.monitor_status == "started_window_expired"
+    assert result.monitor_final_decision_source == "rest_position_inconclusive"
     assert client.cancel_calls == 0
 
 
@@ -660,7 +679,11 @@ def test_monitor_uses_private_ws_for_position_close_then_cleanup() -> None:
         open_orders_responses=[_order_list_response({"orderId": "abc-123", "orderLinkId": "entry-btc", "orderStatus": "Filled"})],
         open_order_lookup=tp_lookup,
     )
-    ws_monitor = FakePrivateWsMonitor(should_close_position=True)
+    ws_monitor = FakePrivateWsMonitor(
+        should_close_position=True,
+        reason="position_closed_via_private_ws",
+        position_decision="position_closed",
+    )
     executor = TradeExecutor(
         settings=_settings(dry_run=False, enable_order_execution=True),
         execution_client=client,
@@ -672,6 +695,8 @@ def test_monitor_uses_private_ws_for_position_close_then_cleanup() -> None:
     assert result.monitor_websocket_started is True
     assert result.monitor_websocket_subscribed is True
     assert result.monitor_rest_fallback_used is False
+    assert result.monitor_final_decision_source == "websocket_position"
+    assert result.monitor_final_decision_reason == "position_closed_via_private_ws"
     assert result.cleanup_status == "cancelled_all"
     assert client.position_calls == 0
 
@@ -693,7 +718,33 @@ def test_monitor_falls_back_to_rest_when_private_ws_fails() -> None:
     assert result.monitor_websocket_started is True
     assert result.monitor_rest_fallback_used is True
     assert result.monitor_status == "started_window_expired"
+    assert result.monitor_final_decision_source == "rest_position_inconclusive"
     assert client.position_calls > 0
+
+
+def test_monitor_falls_back_to_rest_when_ws_has_only_order_events_without_position_confirmation() -> None:
+    client = FakeExecutionClient(
+        open_orders_responses=[_order_list_response({"orderId": "abc-123", "orderLinkId": "entry-btc", "orderStatus": "Filled"})],
+        positions_response={"retCode": 0, "retMsg": "OK", "result": {"list": [{"side": "Buy", "size": "0.1"}]}},
+    )
+    ws_monitor = FakePrivateWsMonitor(
+        should_close_position=False,
+        reason="private_ws_order_only_without_position_confirmation",
+        has_order_events=True,
+        position_decision="inconclusive",
+    )
+    executor = TradeExecutor(
+        settings=_settings(dry_run=False, enable_order_execution=True),
+        execution_client=client,
+        private_ws_monitor=ws_monitor,
+    )
+
+    result = executor.execute_entry(plan=_eligible_plan())
+
+    assert result.monitor_rest_fallback_used is True
+    assert result.monitor_status == "started_window_expired"
+    assert result.monitor_final_decision_source == "rest_position_inconclusive"
+    assert result.monitor_final_decision_reason == "rest_window_expired_without_closed_position"
 
 
 def test_monitor_handles_partial_position_query_failure_safely() -> None:
@@ -711,6 +762,7 @@ def test_monitor_handles_partial_position_query_failure_safely() -> None:
 
     assert result.monitor_started is True
     assert result.monitor_status == "started_failed_with_safe_fallback"
+    assert result.monitor_final_decision_source == "rest_position_error"
     assert result.cleanup_status == "failed"
     assert result.success is False
 

@@ -44,7 +44,7 @@ class RoutedSignalParser:
             result = self._executor.execute_entry(plan=plan)
             if result.order_sent:
                 LOGGER.info(
-                    "Fluxo de execução concluído após confirmação pós-ACK. entry_status=%s reason=%s stop_loss_status=%s stop_loss_reason=%s take_profit_status=%s tp_attempted=%s tp_accepted=%s tp_failed=%s registered_tps=%s cleanup_status=%s cleanup_attempted=%s cleanup_position_closed_within_window=%s cleanup_remaining_registered_tps=%s cleanup_missing_registered_tps=%s cleanup_cancelled=%s cleanup_failed=%s monitor_started=%s monitor_ws_started=%s monitor_ws_connected=%s monitor_ws_authenticated=%s monitor_ws_subscribed=%s monitor_rest_fallback_used=%s monitor_attempts=%s monitor_position_closed=%s monitor_cleanup_completed=%s monitor_status=%s monitor_remaining_orders=%s",
+                    "Fluxo de execução concluído após confirmação pós-ACK. entry_status=%s reason=%s stop_loss_status=%s stop_loss_reason=%s take_profit_status=%s tp_attempted=%s tp_accepted=%s tp_failed=%s registered_tps=%s cleanup_status=%s cleanup_attempted=%s cleanup_position_closed_within_window=%s cleanup_remaining_registered_tps=%s cleanup_missing_registered_tps=%s cleanup_cancelled=%s cleanup_failed=%s monitor_started=%s monitor_ws_started=%s monitor_ws_connected=%s monitor_ws_authenticated=%s monitor_ws_subscribed=%s monitor_rest_fallback_used=%s monitor_attempts=%s monitor_position_closed=%s monitor_cleanup_completed=%s monitor_status=%s monitor_decision_source=%s monitor_decision_reason=%s monitor_remaining_orders=%s",
                     result.entry_status,
                     result.confirmation_reason,
                     result.stop_loss_status,
@@ -71,6 +71,8 @@ class RoutedSignalParser:
                     result.monitor_position_closed_within_window,
                     result.monitor_cleanup_completed_within_window,
                     result.monitor_status,
+                    result.monitor_final_decision_source,
+                    result.monitor_final_decision_reason,
                     len(result.monitor_remaining_execution_orders),
                 )
             else:

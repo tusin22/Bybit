@@ -30,6 +30,8 @@ class PrivateWsWindowResult:
     position_closed_confirmed: bool
     reason: str | None
     matched_order_events: list[PrivateWsOrderEvent]
+    decision_source: str
+    position_decision: str
 
 
 class BybitPrivateExecutionWsMonitor:
@@ -91,7 +93,7 @@ class BybitPrivateExecutionWsMonitor:
         side_for_position = side
         events_received = 0
         matched_order_events: list[PrivateWsOrderEvent] = []
-        position_closed_confirmed = False
+        position_decision = "inconclusive"
         condition = threading.Condition()
 
         connected = False
@@ -129,7 +131,7 @@ class BybitPrivateExecutionWsMonitor:
                 condition.notify_all()
 
         def _on_position(message: dict[str, object]) -> None:
-            nonlocal events_received, position_closed_confirmed
+            nonlocal events_received, position_decision
             payloads = message.get("data")
             if not isinstance(payloads, list):
                 return
@@ -155,8 +157,7 @@ class BybitPrivateExecutionWsMonitor:
                         continue
 
                     events_received += 1
-                    if size_decimal <= 0:
-                        position_closed_confirmed = True
+                    position_decision = _resolve_position_decision_from_size(size_decimal)
                 condition.notify_all()
 
         try:
@@ -177,7 +178,7 @@ class BybitPrivateExecutionWsMonitor:
             end_time = time.monotonic() + timeout_seconds
 
             while time.monotonic() < end_time:
-                if position_closed_confirmed:
+                if position_decision == "position_closed":
                     return PrivateWsWindowResult(
                         started=True,
                         connected=connected,
@@ -187,6 +188,22 @@ class BybitPrivateExecutionWsMonitor:
                         position_closed_confirmed=True,
                         reason="position_closed_via_private_ws",
                         matched_order_events=matched_order_events,
+                        decision_source="websocket_position",
+                        position_decision=position_decision,
+                    )
+
+                if matched_order_events and position_decision == "inconclusive":
+                    return PrivateWsWindowResult(
+                        started=True,
+                        connected=connected,
+                        authenticated=authenticated,
+                        subscribed=subscribed,
+                        events_received=events_received,
+                        position_closed_confirmed=False,
+                        reason="private_ws_order_only_without_position_confirmation",
+                        matched_order_events=matched_order_events,
+                        decision_source="websocket_order_complementary_only",
+                        position_decision=position_decision,
                     )
 
                 remaining = end_time - time.monotonic()
@@ -205,6 +222,8 @@ class BybitPrivateExecutionWsMonitor:
                 position_closed_confirmed=False,
                 reason="private_ws_window_expired_without_final_position_event",
                 matched_order_events=matched_order_events,
+                decision_source="websocket_position_inconclusive",
+                position_decision=position_decision,
             )
         except Exception as exc:  # noqa: BLE001
             raise BybitPrivateWsMonitorError(f"Falha no monitor websocket privado: {exc}") from exc
@@ -222,3 +241,15 @@ def _as_optional_string(value: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value
     return None
+
+
+def _resolve_position_decision_from_size(size: Decimal) -> str:
+    """
+    Regra de fonte de verdade do monitor websocket:
+    - position (size <= 0) confirma fechamento final.
+    - position (size > 0) confirma posição ainda aberta.
+    - order nunca fecha posição sozinho; é apenas telemetria complementar.
+    """
+    if size <= 0:
+        return "position_closed"
+    return "position_open"

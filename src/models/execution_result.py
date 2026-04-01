@@ -86,6 +86,8 @@ class ExecutionResult:
     monitor_cleanup_completed_within_window: bool
     monitor_remaining_execution_orders: list[dict[str, object]]
     monitor_status: ExecutionMonitorStatus
+    monitor_final_decision_source: str | None
+    monitor_final_decision_reason: str | None
     blocked_by_dry_run: bool
     blocked_by_execution_flag: bool
     blocked_by_testnet_guard: bool
