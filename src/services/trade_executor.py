@@ -27,6 +27,9 @@ _CONFIRMED_STATUSES = {"New", "PartiallyFilled", "Filled"}
 _REJECTED_STATUSES = {"Rejected"}
 _CANCELLED_STATUSES = {"Cancelled", "Deactivated", "PartiallyFilledCanceled"}
 _ONE_WAY_POSITION_IDX = 0
+_CLEANUP_MAX_ATTEMPTS = 3
+_CLEANUP_INTERVAL_SECONDS = 0.35
+_OPEN_POSITION_SIDES = {"Buy", "Sell"}
 
 
 class TradeExecutionError(ValueError):
@@ -63,6 +66,21 @@ class _TpQuantityReconciliation:
     residual_after: float
     allocated_to_last_tp: float
     decision: str
+
+
+@dataclass(frozen=True, slots=True)
+class _CleanupResult:
+    attempted: bool
+    status: str
+    position_exists: bool | None
+    position_closed_within_window: bool
+    window_attempts: int
+    remaining_registered_tp_count: int
+    missing_registered_tp_count: int
+    found_count: int
+    cancelled_count: int
+    failed_count: int
+    failures: list[dict[str, object]]
 
 
 class TradeExecutor:
@@ -350,6 +368,29 @@ class TradeExecutor:
             attempted_count=tp_attempted_count,
             failed_count=tp_failed_count,
         )
+        registered_tp_orders = _collect_registered_tp_orders(tp_response_summaries)
+        cleanup = _CleanupResult(
+            attempted=False,
+            status="not_attempted",
+            position_exists=None,
+            position_closed_within_window=False,
+            window_attempts=0,
+            remaining_registered_tp_count=0,
+            missing_registered_tp_count=0,
+            found_count=0,
+            cancelled_count=0,
+            failed_count=0,
+            failures=[],
+        )
+        if order_confirmed and registered_tp_orders:
+            cleanup = self._cleanup_pending_tp_orders_if_position_closed(
+                symbol=plan.symbol,
+                category=plan.category,
+                side=plan.planned_entry_side,
+                entry_order_id=_as_optional_string(summary.get("orderId")),
+                entry_order_link_id=_as_optional_string(summary.get("orderLinkId")),
+                registered_tp_orders=registered_tp_orders,
+            )
 
         success, success_reason = _evaluate_overall_success(
             order_confirmed=order_confirmed,
@@ -357,6 +398,7 @@ class TradeExecutor:
             sl_configured=sl_configured,
             tp_attempted=tp_attempted,
             tp_status=tp_status,
+            cleanup_status=cleanup.status,
         )
         summary["successReason"] = success_reason
         LOGGER.info(
@@ -374,6 +416,7 @@ class TradeExecutor:
             symbol=plan.symbol,
             category=plan.category,
             side=plan.planned_entry_side,
+            entry_status=confirmation.status,
             order_attempted=True,
             order_sent=True,
             order_confirmed=order_confirmed,
@@ -387,7 +430,19 @@ class TradeExecutor:
             take_profit_accepted_count=tp_accepted_count,
             take_profit_failed_count=tp_failed_count,
             take_profit_failures=tp_failures,
+            registered_take_profit_orders=registered_tp_orders,
             take_profit_reconciliation_summary=tp_reconciliation_summary,
+            cleanup_attempted=cleanup.attempted,
+            cleanup_status=cleanup.status,
+            cleanup_position_exists=cleanup.position_exists,
+            cleanup_position_closed_within_window=cleanup.position_closed_within_window,
+            cleanup_window_attempts=cleanup.window_attempts,
+            cleanup_remaining_registered_tp_count=cleanup.remaining_registered_tp_count,
+            cleanup_missing_registered_tp_count=cleanup.missing_registered_tp_count,
+            cleanup_found_count=cleanup.found_count,
+            cleanup_cancelled_count=cleanup.cancelled_count,
+            cleanup_failed_count=cleanup.failed_count,
+            cleanup_failure_reasons=cleanup.failures,
             blocked_by_dry_run=False,
             blocked_by_execution_flag=False,
             blocked_by_testnet_guard=False,
@@ -400,6 +455,209 @@ class TradeExecutor:
             client_order_context=client_order_context,
             success=success,
         )
+
+    def _cleanup_pending_tp_orders_if_position_closed(
+        self,
+        *,
+        symbol: str,
+        category: str,
+        side: str,
+        entry_order_id: str | None,
+        entry_order_link_id: str | None,
+        registered_tp_orders: list[dict[str, object]],
+    ) -> _CleanupResult:
+        failures: list[dict[str, object]] = []
+        position_exists: bool | None = None
+        position_closed_within_window = False
+        attempts_used = 0
+
+        for attempt in range(1, _CLEANUP_MAX_ATTEMPTS + 1):
+            attempts_used = attempt
+            try:
+                position_exists = self._has_open_position(symbol=symbol, category=category)
+            except BybitExecutionClientError as exc:
+                LOGGER.error(
+                    "Falha ao verificar posição para limpeza de TPs pendurados. symbol=%s category=%s side=%s attempt=%s/%s reason=%s",
+                    symbol,
+                    category,
+                    side,
+                    attempt,
+                    _CLEANUP_MAX_ATTEMPTS,
+                    exc,
+                )
+                return _CleanupResult(
+                    attempted=True,
+                    status="failed",
+                    position_exists=None,
+                    position_closed_within_window=False,
+                    window_attempts=attempts_used,
+                    remaining_registered_tp_count=0,
+                    missing_registered_tp_count=0,
+                    found_count=0,
+                    cancelled_count=0,
+                    failed_count=1,
+                    failures=[{"reason": str(exc), "step": "position_check"}],
+                )
+
+            LOGGER.info(
+                "Verificação de posição para limpeza. symbol=%s category=%s side=%s has_open_position=%s attempt=%s/%s",
+                symbol,
+                category,
+                side,
+                position_exists,
+                attempt,
+                _CLEANUP_MAX_ATTEMPTS,
+            )
+
+            if position_exists is False:
+                position_closed_within_window = True
+                break
+
+            if attempt < _CLEANUP_MAX_ATTEMPTS:
+                time.sleep(_CLEANUP_INTERVAL_SECONDS)
+
+        if not position_closed_within_window:
+            return _CleanupResult(
+                attempted=True,
+                status="position_not_closed_in_window",
+                position_exists=position_exists,
+                position_closed_within_window=False,
+                window_attempts=attempts_used,
+                remaining_registered_tp_count=0,
+                missing_registered_tp_count=0,
+                found_count=0,
+                cancelled_count=0,
+                failed_count=0,
+                failures=[],
+            )
+
+        remaining_tp_orders: list[dict[str, object]] = []
+        missing_registered_tp_count = 0
+        for tp_order in registered_tp_orders:
+            tp_order_id = _as_optional_string(tp_order.get("orderId"))
+            tp_order_link_id = _as_optional_string(tp_order.get("orderLinkId"))
+            snapshot = self._fetch_order_snapshot(
+                category=category,
+                symbol=symbol,
+                order_id=tp_order_id,
+                order_link_id=tp_order_link_id,
+            )
+            if snapshot is None:
+                missing_registered_tp_count += 1
+                continue
+            remaining_tp_orders.append(snapshot)
+
+        found_count = len(remaining_tp_orders)
+        cancelled_count = 0
+
+        LOGGER.info(
+            "Limpeza de ordens penduradas iniciada. symbol=%s category=%s side=%s entryOrderId=%s entryOrderLinkId=%s position_exists=%s registered_tps=%s remaining_registered_tps=%s missing_registered_tps=%s",
+            symbol,
+            category,
+            side,
+            entry_order_id,
+            entry_order_link_id,
+            position_exists,
+            len(registered_tp_orders),
+            found_count,
+            missing_registered_tp_count,
+        )
+
+        if found_count == 0:
+            return _CleanupResult(
+                attempted=True,
+                status="not_needed",
+                position_exists=position_exists,
+                position_closed_within_window=True,
+                window_attempts=attempts_used,
+                remaining_registered_tp_count=0,
+                missing_registered_tp_count=missing_registered_tp_count,
+                found_count=0,
+                cancelled_count=0,
+                failed_count=0,
+                failures=[],
+            )
+
+        for order in remaining_tp_orders:
+            order_id = _as_optional_string(order.get("orderId"))
+            order_link_id = _as_optional_string(order.get("orderLinkId"))
+            try:
+                self._execution_client.cancel_order(
+                    category=category,
+                    symbol=symbol,
+                    order_id=order_id,
+                    order_link_id=order_link_id,
+                )
+                cancelled_count += 1
+            except BybitExecutionClientError as exc:
+                failures.append(
+                    {
+                        "orderId": order_id,
+                        "orderLinkId": order_link_id,
+                        "reason": str(exc),
+                    }
+                )
+
+        failed_count = len(failures)
+        cleanup_status = "cancelled_all"
+        if failed_count > 0 and cancelled_count > 0:
+            cleanup_status = "partial"
+        elif failed_count > 0 and cancelled_count == 0:
+            cleanup_status = "failed"
+
+        LOGGER.info(
+            "Limpeza de ordens penduradas concluída. symbol=%s category=%s side=%s position_exists=%s found=%s cancelled=%s failed=%s",
+            symbol,
+            category,
+            side,
+            position_exists,
+            found_count,
+            cancelled_count,
+            failed_count,
+        )
+
+        if failures:
+            LOGGER.error(
+                "Falhas ao cancelar ordens penduradas. symbol=%s category=%s side=%s failures=%s",
+                symbol,
+                category,
+                side,
+                failures,
+            )
+
+        return _CleanupResult(
+            attempted=True,
+            status=cleanup_status,
+            position_exists=position_exists,
+            position_closed_within_window=True,
+            window_attempts=attempts_used,
+            remaining_registered_tp_count=found_count,
+            missing_registered_tp_count=missing_registered_tp_count,
+            found_count=found_count,
+            cancelled_count=cancelled_count,
+            failed_count=failed_count,
+            failures=failures,
+        )
+
+    def _has_open_position(self, *, symbol: str, category: str) -> bool:
+        response = self._execution_client.get_positions(category=category, symbol=symbol)
+        positions = self._execution_client.extract_order_list(response)
+
+        for position in positions:
+            position_side = _as_optional_string(position.get("side"))
+            size = _as_optional_string(position.get("size"))
+            if position_side not in _OPEN_POSITION_SIDES:
+                continue
+            if size is None:
+                continue
+            try:
+                if Decimal(size) > 0:
+                    return True
+            except (InvalidOperation, ValueError):
+                continue
+
+        return False
+
 
     def _validate_critical_data(self, *, plan: ExecutionPlan) -> None:
         if not plan.symbol.strip():
@@ -650,6 +908,7 @@ class TradeExecutor:
             symbol=plan.symbol,
             category=plan.category,
             side=plan.planned_entry_side,
+            entry_status="not_sent",
             order_attempted=False,
             order_sent=False,
             order_confirmed=False,
@@ -663,7 +922,19 @@ class TradeExecutor:
             take_profit_accepted_count=0,
             take_profit_failed_count=0,
             take_profit_failures=[],
+            registered_take_profit_orders=[],
             take_profit_reconciliation_summary={},
+            cleanup_attempted=False,
+            cleanup_status="not_attempted",
+            cleanup_position_exists=None,
+            cleanup_position_closed_within_window=False,
+            cleanup_window_attempts=0,
+            cleanup_remaining_registered_tp_count=0,
+            cleanup_missing_registered_tp_count=0,
+            cleanup_found_count=0,
+            cleanup_cancelled_count=0,
+            cleanup_failed_count=0,
+            cleanup_failure_reasons=[],
             blocked_by_dry_run=blocked_by_dry_run,
             blocked_by_execution_flag=blocked_by_execution_flag,
             blocked_by_testnet_guard=blocked_by_testnet_guard,
@@ -748,6 +1019,25 @@ def _build_take_profit_summary(
     }
 
 
+def _collect_registered_tp_orders(tp_summaries: list[dict[str, object]]) -> list[dict[str, object]]:
+    registered: list[dict[str, object]] = []
+    for summary in tp_summaries:
+        if summary.get("requestAccepted") is not True:
+            continue
+        order_id = _as_optional_string(summary.get("orderId"))
+        order_link_id = _as_optional_string(summary.get("orderLinkId"))
+        if order_id is None and order_link_id is None:
+            continue
+        registered.append(
+            {
+                "tpIndex": summary.get("tpIndex"),
+                "orderId": order_id,
+                "orderLinkId": order_link_id,
+            }
+        )
+    return registered
+
+
 def _resolve_tp_status(
     *,
     attempted: bool,
@@ -772,6 +1062,7 @@ def _evaluate_overall_success(
     sl_configured: bool,
     tp_attempted: bool,
     tp_status: TakeProfitStatus,
+    cleanup_status: str,
 ) -> tuple[bool, str]:
     if not order_confirmed:
         return False, "entrada_nao_confirmada"
@@ -781,6 +1072,9 @@ def _evaluate_overall_success(
 
     if tp_attempted and tp_status != "all_configured":
         return False, "take_profits_com_falha"
+
+    if cleanup_status in {"failed", "partial"}:
+        return False, "limpeza_de_ordens_com_falha"
 
     if not tp_attempted:
         return True, "entrada_confirmada_sem_tentativa_de_tp_por_fluxo_valido"
