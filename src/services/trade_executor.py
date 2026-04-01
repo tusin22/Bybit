@@ -27,9 +27,10 @@ _CONFIRMED_STATUSES = {"New", "PartiallyFilled", "Filled"}
 _REJECTED_STATUSES = {"Rejected"}
 _CANCELLED_STATUSES = {"Cancelled", "Deactivated", "PartiallyFilledCanceled"}
 _ONE_WAY_POSITION_IDX = 0
-_CLEANUP_MAX_ATTEMPTS = 3
-_CLEANUP_INTERVAL_SECONDS = 0.35
+_EXECUTION_MONITOR_MAX_ATTEMPTS = 4
+_EXECUTION_MONITOR_INTERVAL_SECONDS = 0.4
 _OPEN_POSITION_SIDES = {"Buy", "Sell"}
+_ACTIVE_ORDER_STATUSES = {"Created", "Untriggered", "Triggered", "New", "PartiallyFilled"}
 
 
 class TradeExecutionError(ValueError):
@@ -81,6 +82,22 @@ class _CleanupResult:
     cancelled_count: int
     failed_count: int
     failures: list[dict[str, object]]
+
+
+@dataclass(frozen=True, slots=True)
+class _ExecutionMonitorResult:
+    started: bool
+    attempts: int
+    position_closed_within_window: bool
+    cleanup_completed_within_window: bool
+    remaining_execution_orders: list[dict[str, object]]
+    status: str
+    cleanup_status: str
+    cleanup_found_count: int
+    cleanup_cancelled_count: int
+    cleanup_failed_count: int
+    cleanup_missing_registered_tp_count: int
+    cleanup_failures: list[dict[str, object]]
 
 
 class TradeExecutor:
@@ -382,8 +399,22 @@ class TradeExecutor:
             failed_count=0,
             failures=[],
         )
+        execution_monitor = _ExecutionMonitorResult(
+            started=False,
+            attempts=0,
+            position_closed_within_window=False,
+            cleanup_completed_within_window=False,
+            remaining_execution_orders=[],
+            status="not_started",
+            cleanup_status="not_attempted",
+            cleanup_found_count=0,
+            cleanup_cancelled_count=0,
+            cleanup_failed_count=0,
+            cleanup_missing_registered_tp_count=0,
+            cleanup_failures=[],
+        )
         if order_confirmed and registered_tp_orders:
-            cleanup = self._cleanup_pending_tp_orders_if_position_closed(
+            execution_monitor = self._run_execution_monitor_window(
                 symbol=plan.symbol,
                 category=plan.category,
                 side=plan.planned_entry_side,
@@ -391,6 +422,7 @@ class TradeExecutor:
                 entry_order_link_id=_as_optional_string(summary.get("orderLinkId")),
                 registered_tp_orders=registered_tp_orders,
             )
+            cleanup = self._build_cleanup_from_monitor(execution_monitor)
 
         success, success_reason = _evaluate_overall_success(
             order_confirmed=order_confirmed,
@@ -443,6 +475,12 @@ class TradeExecutor:
             cleanup_cancelled_count=cleanup.cancelled_count,
             cleanup_failed_count=cleanup.failed_count,
             cleanup_failure_reasons=cleanup.failures,
+            monitor_started=execution_monitor.started,
+            monitor_attempts=execution_monitor.attempts,
+            monitor_position_closed_within_window=execution_monitor.position_closed_within_window,
+            monitor_cleanup_completed_within_window=execution_monitor.cleanup_completed_within_window,
+            monitor_remaining_execution_orders=execution_monitor.remaining_execution_orders,
+            monitor_status=execution_monitor.status,
             blocked_by_dry_run=False,
             blocked_by_execution_flag=False,
             blocked_by_testnet_guard=False,
@@ -456,7 +494,7 @@ class TradeExecutor:
             success=success,
         )
 
-    def _cleanup_pending_tp_orders_if_position_closed(
+    def _run_execution_monitor_window(
         self,
         *,
         symbol: str,
@@ -465,13 +503,25 @@ class TradeExecutor:
         entry_order_id: str | None,
         entry_order_link_id: str | None,
         registered_tp_orders: list[dict[str, object]],
-    ) -> _CleanupResult:
+    ) -> _ExecutionMonitorResult:
         failures: list[dict[str, object]] = []
         position_exists: bool | None = None
         position_closed_within_window = False
         attempts_used = 0
 
-        for attempt in range(1, _CLEANUP_MAX_ATTEMPTS + 1):
+        LOGGER.info(
+            "Monitor curto da execução iniciado. symbol=%s category=%s side=%s entryOrderId=%s entryOrderLinkId=%s registered_tps=%s max_attempts=%s interval_seconds=%s",
+            symbol,
+            category,
+            side,
+            entry_order_id,
+            entry_order_link_id,
+            len(registered_tp_orders),
+            _EXECUTION_MONITOR_MAX_ATTEMPTS,
+            _EXECUTION_MONITOR_INTERVAL_SECONDS,
+        )
+
+        for attempt in range(1, _EXECUTION_MONITOR_MAX_ATTEMPTS + 1):
             attempts_used = attempt
             try:
                 position_exists = self._has_open_position(symbol=symbol, category=category)
@@ -482,21 +532,22 @@ class TradeExecutor:
                     category,
                     side,
                     attempt,
-                    _CLEANUP_MAX_ATTEMPTS,
+                    _EXECUTION_MONITOR_MAX_ATTEMPTS,
                     exc,
                 )
-                return _CleanupResult(
-                    attempted=True,
-                    status="failed",
-                    position_exists=None,
+                return _ExecutionMonitorResult(
+                    started=True,
+                    attempts=attempts_used,
                     position_closed_within_window=False,
-                    window_attempts=attempts_used,
-                    remaining_registered_tp_count=0,
-                    missing_registered_tp_count=0,
-                    found_count=0,
-                    cancelled_count=0,
-                    failed_count=1,
-                    failures=[{"reason": str(exc), "step": "position_check"}],
+                    cleanup_completed_within_window=False,
+                    remaining_execution_orders=[],
+                    status="started_failed_with_safe_fallback",
+                    cleanup_status="failed",
+                    cleanup_found_count=0,
+                    cleanup_cancelled_count=0,
+                    cleanup_failed_count=1,
+                    cleanup_missing_registered_tp_count=0,
+                    cleanup_failures=[{"reason": str(exc), "step": "position_check"}],
                 )
 
             LOGGER.info(
@@ -506,29 +557,35 @@ class TradeExecutor:
                 side,
                 position_exists,
                 attempt,
-                _CLEANUP_MAX_ATTEMPTS,
+                _EXECUTION_MONITOR_MAX_ATTEMPTS,
             )
 
             if position_exists is False:
                 position_closed_within_window = True
                 break
 
-            if attempt < _CLEANUP_MAX_ATTEMPTS:
-                time.sleep(_CLEANUP_INTERVAL_SECONDS)
+            if attempt < _EXECUTION_MONITOR_MAX_ATTEMPTS:
+                time.sleep(_EXECUTION_MONITOR_INTERVAL_SECONDS)
 
         if not position_closed_within_window:
-            return _CleanupResult(
-                attempted=True,
-                status="position_not_closed_in_window",
-                position_exists=position_exists,
+            remaining_orders = self._fetch_remaining_registered_orders(
+                category=category,
+                symbol=symbol,
+                registered_tp_orders=registered_tp_orders,
+            )
+            return _ExecutionMonitorResult(
+                started=True,
+                attempts=attempts_used,
                 position_closed_within_window=False,
-                window_attempts=attempts_used,
-                remaining_registered_tp_count=0,
-                missing_registered_tp_count=0,
-                found_count=0,
-                cancelled_count=0,
-                failed_count=0,
-                failures=[],
+                cleanup_completed_within_window=False,
+                remaining_execution_orders=remaining_orders,
+                status="started_window_expired",
+                cleanup_status="position_not_closed_in_window",
+                cleanup_found_count=len(remaining_orders),
+                cleanup_cancelled_count=0,
+                cleanup_failed_count=0,
+                cleanup_missing_registered_tp_count=0,
+                cleanup_failures=[],
             )
 
         remaining_tp_orders: list[dict[str, object]] = []
@@ -564,18 +621,19 @@ class TradeExecutor:
         )
 
         if found_count == 0:
-            return _CleanupResult(
-                attempted=True,
-                status="not_needed",
-                position_exists=position_exists,
+            return _ExecutionMonitorResult(
+                started=True,
+                attempts=attempts_used,
                 position_closed_within_window=True,
-                window_attempts=attempts_used,
-                remaining_registered_tp_count=0,
-                missing_registered_tp_count=missing_registered_tp_count,
-                found_count=0,
-                cancelled_count=0,
-                failed_count=0,
-                failures=[],
+                cleanup_completed_within_window=True,
+                remaining_execution_orders=[],
+                status="started_position_closed_cleanup_done",
+                cleanup_status="not_needed",
+                cleanup_found_count=0,
+                cleanup_cancelled_count=0,
+                cleanup_failed_count=0,
+                cleanup_missing_registered_tp_count=missing_registered_tp_count,
+                cleanup_failures=[],
             )
 
         for order in remaining_tp_orders:
@@ -625,23 +683,83 @@ class TradeExecutor:
                 failures,
             )
 
+        remaining_after_cleanup = self._fetch_remaining_registered_orders(
+            category=category,
+            symbol=symbol,
+            registered_tp_orders=registered_tp_orders,
+        )
+        cleanup_completed = cleanup_status in {"cancelled_all", "not_needed"}
+        monitor_status = (
+            "started_position_closed_cleanup_done"
+            if cleanup_completed
+            else "started_failed_with_safe_fallback"
+        )
+
+        return _ExecutionMonitorResult(
+            started=True,
+            attempts=attempts_used,
+            position_closed_within_window=True,
+            cleanup_completed_within_window=cleanup_completed,
+            remaining_execution_orders=remaining_after_cleanup,
+            status=monitor_status,
+            cleanup_status=cleanup_status,
+            cleanup_found_count=found_count,
+            cleanup_cancelled_count=cancelled_count,
+            cleanup_failed_count=failed_count,
+            cleanup_missing_registered_tp_count=missing_registered_tp_count,
+            cleanup_failures=failures,
+        )
+
+    def _build_cleanup_from_monitor(self, monitor: _ExecutionMonitorResult) -> _CleanupResult:
         return _CleanupResult(
             attempted=True,
-            status=cleanup_status,
-            position_exists=position_exists,
-            position_closed_within_window=True,
-            window_attempts=attempts_used,
-            remaining_registered_tp_count=found_count,
-            missing_registered_tp_count=missing_registered_tp_count,
-            found_count=found_count,
-            cancelled_count=cancelled_count,
-            failed_count=failed_count,
-            failures=failures,
+            status=monitor.cleanup_status,
+            position_exists=(
+                None if monitor.cleanup_status == "failed" else not monitor.position_closed_within_window
+            ),
+            position_closed_within_window=monitor.position_closed_within_window,
+            window_attempts=monitor.attempts,
+            remaining_registered_tp_count=len(monitor.remaining_execution_orders),
+            missing_registered_tp_count=monitor.cleanup_missing_registered_tp_count,
+            found_count=monitor.cleanup_found_count,
+            cancelled_count=monitor.cleanup_cancelled_count,
+            failed_count=monitor.cleanup_failed_count,
+            failures=monitor.cleanup_failures,
         )
+
+    def _fetch_remaining_registered_orders(
+        self,
+        *,
+        category: str,
+        symbol: str,
+        registered_tp_orders: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        remaining_orders: list[dict[str, object]] = []
+        for tp_order in registered_tp_orders:
+            snapshot = self._fetch_order_snapshot(
+                category=category,
+                symbol=symbol,
+                order_id=_as_optional_string(tp_order.get("orderId")),
+                order_link_id=_as_optional_string(tp_order.get("orderLinkId")),
+            )
+            if snapshot is None:
+                continue
+            order_status = _as_optional_string(snapshot.get("orderStatus"))
+            if order_status not in _ACTIVE_ORDER_STATUSES:
+                continue
+            remaining_orders.append(
+                {
+                    "tpIndex": tp_order.get("tpIndex"),
+                    "orderId": _as_optional_string(snapshot.get("orderId")),
+                    "orderLinkId": _as_optional_string(snapshot.get("orderLinkId")),
+                    "orderStatus": order_status,
+                }
+            )
+        return remaining_orders
 
     def _has_open_position(self, *, symbol: str, category: str) -> bool:
         response = self._execution_client.get_positions(category=category, symbol=symbol)
-        positions = self._execution_client.extract_order_list(response)
+        positions = self._execution_client.extract_position_list(response)
 
         for position in positions:
             position_side = _as_optional_string(position.get("side"))
@@ -935,6 +1053,12 @@ class TradeExecutor:
             cleanup_cancelled_count=0,
             cleanup_failed_count=0,
             cleanup_failure_reasons=[],
+            monitor_started=False,
+            monitor_attempts=0,
+            monitor_position_closed_within_window=False,
+            monitor_cleanup_completed_within_window=False,
+            monitor_remaining_execution_orders=[],
+            monitor_status="not_started",
             blocked_by_dry_run=blocked_by_dry_run,
             blocked_by_execution_flag=blocked_by_execution_flag,
             blocked_by_testnet_guard=blocked_by_testnet_guard,

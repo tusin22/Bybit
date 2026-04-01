@@ -21,6 +21,7 @@ class FakeExecutionClient:
         open_orders_for_symbol_response: dict[str, object] | None = None,
         cancel_fail_order_ids: set[str] | None = None,
         open_order_lookup: dict[str, dict[str, object] | None] | None = None,
+        fail_positions_on_call: int | None = None,
     ) -> None:
         self.calls = 0
         self.last_order = None
@@ -47,6 +48,7 @@ class FakeExecutionClient:
         }
         self._cancel_fail_order_ids = cancel_fail_order_ids or set()
         self._open_order_lookup = open_order_lookup or {}
+        self._fail_positions_on_call = fail_positions_on_call
 
     def place_entry_market_order(self, *, order):
         self.calls += 1
@@ -102,6 +104,8 @@ class FakeExecutionClient:
 
     def get_positions(self, *, category, symbol):
         self.position_calls += 1
+        if self._fail_positions_on_call is not None and self.position_calls == self._fail_positions_on_call:
+            raise BybitExecutionClientError("position lookup failed")
         if self._positions_responses:
             return self._positions_responses.pop(0)
         return self._positions_response
@@ -143,6 +147,16 @@ class FakeExecutionClient:
         if not isinstance(order_list, list):
             return []
         return [item for item in order_list if isinstance(item, dict)]
+
+    @staticmethod
+    def extract_position_list(response: dict[str, object]) -> list[dict[str, object]]:
+        result = response.get("result")
+        if not isinstance(result, dict):
+            return []
+        position_list = result.get("list")
+        if not isinstance(position_list, list):
+            return []
+        return [item for item in position_list if isinstance(item, dict)]
 
 
 def _empty_order_list_response() -> dict[str, object]:
@@ -515,6 +529,8 @@ def test_cleanup_does_not_cancel_when_position_still_open() -> None:
     assert result.cleanup_status == "position_not_closed_in_window"
     assert result.cleanup_position_closed_within_window is False
     assert result.cleanup_cancelled_count == 0
+    assert result.monitor_started is True
+    assert result.monitor_status == "started_window_expired"
     assert client.cancel_calls == 0
 
 
@@ -543,6 +559,9 @@ def test_cleanup_cancels_pending_tps_when_position_is_closed() -> None:
     assert result.cleanup_found_count == 2
     assert result.cleanup_cancelled_count == 2
     assert result.cleanup_failed_count == 0
+    assert result.monitor_started is True
+    assert result.monitor_status == "started_position_closed_cleanup_done"
+    assert result.monitor_cleanup_completed_within_window is True
 
 
 def test_cleanup_handles_partial_cancel_failures() -> None:
@@ -568,6 +587,7 @@ def test_cleanup_handles_partial_cancel_failures() -> None:
     assert result.cleanup_cancelled_count == 1
     assert result.cleanup_failed_count == 1
     assert len(result.cleanup_failure_reasons) == 1
+    assert result.monitor_status == "started_failed_with_safe_fallback"
 
 
 def test_cleanup_handles_registered_orders_that_already_disappeared() -> None:
@@ -591,6 +611,26 @@ def test_cleanup_handles_registered_orders_that_already_disappeared() -> None:
     assert result.cleanup_remaining_registered_tp_count == 1
     assert result.cleanup_missing_registered_tp_count >= 1
     assert result.cleanup_cancelled_count == 1
+    assert result.monitor_status == "started_position_closed_cleanup_done"
+
+
+def test_monitor_handles_partial_position_query_failure_safely() -> None:
+    client = FakeExecutionClient(
+        open_orders_responses=[_order_list_response({"orderId": "abc-123", "orderLinkId": "entry-btc", "orderStatus": "Filled"})],
+        positions_responses=[{"retCode": 0, "retMsg": "OK", "result": {"list": [{"side": "Buy", "size": "0.1"}]}}],
+        fail_positions_on_call=2,
+    )
+    executor = TradeExecutor(
+        settings=_settings(dry_run=False, enable_order_execution=True),
+        execution_client=client,
+    )
+
+    result = executor.execute_entry(plan=_eligible_plan())
+
+    assert result.monitor_started is True
+    assert result.monitor_status == "started_failed_with_safe_fallback"
+    assert result.cleanup_status == "failed"
+    assert result.success is False
 
 
 def test_callback_stays_alive_in_routed_parser_when_cleanup_fails_safely() -> None:
