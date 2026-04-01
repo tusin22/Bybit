@@ -270,6 +270,18 @@ class BybitExecutionClient:
         return first
 
     @staticmethod
+    def extract_position_list(response: dict[str, object]) -> list[dict[str, object]]:
+        result = response.get("result")
+        if not isinstance(result, dict):
+            return []
+
+        position_list = result.get("list")
+        if not isinstance(position_list, list):
+            return []
+
+        return [item for item in position_list if isinstance(item, dict)]
+
+    @staticmethod
     def extract_order_list(response: dict[str, object]) -> list[dict[str, object]]:
         result = response.get("result")
         if not isinstance(result, dict):

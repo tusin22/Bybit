@@ -23,6 +23,7 @@ Projeto em Python para processar sinais de trade recebidos via Telegram, com evo
 - Proteção pós-confirmação: configuração automática de **stop loss** na posição via `Set Trading Stop`.
 - Take profits parciais pós-confirmação com **4 ordens Limit** separadas em `category=linear`, `positionIdx=0`, `reduceOnly=true` (distribuição configurável por `.env`).
 - Limpeza incremental de ordens penduradas com foco nos IDs de TP da execução atual (REST curto e controlado, sem monitor contínuo).
+- Monitor curto da execução atual após entrada+proteções para acompanhar fechamento da posição e concluir cleanup com janela limitada.
 - **Sem trailing stop nesta fase**.
 - **Sem monitor contínuo de posição e sem websocket nesta fase**.
 - Confirmação pós-ACK implementada com polling REST curto e controlado (sem websocket).
@@ -132,12 +133,15 @@ No startup, o listener valida/resolve `TELEGRAM_SOURCE_CHAT`; se o valor for inv
   - status de configuração do stop loss;
   - status dos take profits (tentados, aceitos, falhos e razões por TP), incluindo resumo de reconciliação das quantidades;
   - status da limpeza pós-fechamento de posição (tentativa, quantidade encontrada/cancelada/falha e razões).
-- Após confirmação e configuração de proteção, há um passo explícito de limpeza:
+- Após confirmação e configuração de proteção, há um monitor curto da execução atual:
+  - usa os IDs da entrada e dos TPs aceitos desta execução;
+  - consulta posição via REST (`Get Position Info`) e snapshots de ordens via REST (`Get Open & Closed Orders` / `Get Order History`) em poucas tentativas;
+  - se detectar posição fechada dentro da janela, aciona cleanup para cancelar apenas TPs remanescentes desta execução;
+  - registra tentativas, status final do monitor e ordens remanescentes no `ExecutionResult`;
+  - encerra com timeout explícito quando a posição não fecha na janela curta.
+- A limpeza incremental continua com foco nos IDs dos TPs da execução atual:
   - registra os `orderId` / `orderLinkId` dos TPs aceitos na execução atual;
-  - consulta de posição via REST (`Get Position Info`);
-  - faz um check pós-fechamento curto (poucas tentativas com intervalo curto e timeout explícito);
-  - se a posição fechar dentro da janela curta, tenta cancelar apenas os TPs registrados desta execução;
-  - se a posição não fechar na janela curta, encerra com status claro sem cancelar;
+  - quando acionada pelo monitor curto, tenta cancelar apenas os TPs registrados desta execução;
   - sem loop infinito, sem monitor contínuo e sem websocket nesta fase.
 - Interpretação de `success` no resultado final:
   - `True` apenas quando entrada está confirmada, stop loss (quando tentado) foi configurado e TPs (quando tentados) não tiveram falhas;

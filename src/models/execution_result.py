@@ -35,6 +35,13 @@ CleanupStatus = Literal[
     "failed",
 ]
 
+ExecutionMonitorStatus = Literal[
+    "not_started",
+    "started_position_closed_cleanup_done",
+    "started_window_expired",
+    "started_failed_with_safe_fallback",
+]
+
 
 @dataclass(slots=True)
 class ExecutionResult:
@@ -68,6 +75,12 @@ class ExecutionResult:
     cleanup_cancelled_count: int
     cleanup_failed_count: int
     cleanup_failure_reasons: list[dict[str, object]]
+    monitor_started: bool
+    monitor_attempts: int
+    monitor_position_closed_within_window: bool
+    monitor_cleanup_completed_within_window: bool
+    monitor_remaining_execution_orders: list[dict[str, object]]
+    monitor_status: ExecutionMonitorStatus
     blocked_by_dry_run: bool
     blocked_by_execution_flag: bool
     blocked_by_testnet_guard: bool
