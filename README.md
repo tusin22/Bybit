@@ -20,9 +20,10 @@ Projeto em Python para processar sinais de trade recebidos via Telegram, com evo
   - bloqueio quando `ExecutionPlan` não for elegível.
 - Log estruturado do resultado da tentativa de execução (`ExecutionResult`).
 - Em falha de parsing, log de erro claro e continuidade do loop.
-- **Sem TP/SL automáticos nesta fase**.
+- Proteção inicial pós-confirmação: configuração automática de **stop loss** na posição via `Set Trading Stop` (sem take profit).
 - **Sem reduceOnly nesta fase**.
-- **Sem monitor e sem websocket nesta fase**.
+- **Sem trailing stop nesta fase**.
+- **Sem monitor contínuo de posição e sem websocket nesta fase**.
 - Confirmação pós-ACK implementada com polling REST curto e controlado (sem websocket).
 
 ## Requisitos
@@ -112,6 +113,11 @@ No startup, o listener valida/resolve `TELEGRAM_SOURCE_CHAT`; se o valor for inv
   - tentativa de ordem (`order_attempted`);
   - submissão aceita pela API (`order_sent` / ACK inicial);
   - confirmação pós-ACK (`order_confirmed`) via REST com status explícito: `pending_confirmation`, `confirmed`, `rejected`, `cancelled`, `not_found` ou `timeout`.
+- Após confirmação da entrada (`confirmation_status=confirmed`), o executor só arma `stopLoss` quando o `orderStatus` observado indica posição aberta (`PartiallyFilled` ou `Filled`) em one-way (`positionIdx=0`) via REST em `category=linear`.
+- O resultado estruturado (`ExecutionResult`) agora separa explicitamente:
+  - confirmação da entrada;
+  - tentativa de configuração do stop loss;
+  - sucesso/falha da configuração de stop loss.
 
 ## Rodar testes
 

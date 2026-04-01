@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from src.bybit.execution_client import BybitExecutionClientError
 from src.main import RoutedSignalParser
+from src.models.execution_result import ExecutionResult
 from src.models.execution_plan import ExecutionPlan
 from src.models.signal import Signal
 
@@ -93,3 +94,44 @@ def test_routed_signal_parser_keeps_callback_alive_when_confirmation_fails() -> 
     assert isinstance(result, Signal)
     assert result.entry_eligible is False
     assert "callback mantido ativo" in (result.entry_validation_reason or "")
+
+
+class StopLossFailingButSafeExecutor:
+    def execute_entry(self, *, plan: ExecutionPlan):
+        return ExecutionResult(
+            symbol=plan.symbol,
+            category=plan.category,
+            side=plan.planned_entry_side,
+            order_attempted=True,
+            order_sent=True,
+            order_confirmed=True,
+            stop_loss_attempted=True,
+            stop_loss_configured=False,
+            stop_loss_status="failed",
+            stop_loss_reason="Falha Bybit em set_trading_stop: retCode=110011 retMsg=SL invalid",
+            blocked_by_dry_run=False,
+            blocked_by_execution_flag=False,
+            blocked_by_testnet_guard=False,
+            blocked_reason=None,
+            confirmation_status="confirmed",
+            confirmation_reason="orderStatus confirmado via REST",
+            bybit_response_summary={"orderId": "abc-123", "orderLinkId": "entry-btc"},
+            stop_loss_response_summary={"requestAccepted": False},
+            client_order_context="entry-btc",
+            success=False,
+        )
+
+
+def test_routed_signal_parser_keeps_callback_alive_when_stop_loss_fails() -> None:
+    parser = RoutedSignalParser(
+        router=FakeRouter(),
+        planner=FakePlanner(),
+        executor=StopLossFailingButSafeExecutor(),
+    )
+    parser._parser = FakeSignalParser()
+
+    result = parser.parse("BTCUSDT LONG")
+
+    assert isinstance(result, ExecutionResult)
+    assert result.order_confirmed is True
+    assert result.stop_loss_status == "failed"

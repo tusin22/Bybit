@@ -43,9 +43,11 @@ class RoutedSignalParser:
             result = self._executor.execute_entry(plan=plan)
             if result.order_sent:
                 LOGGER.info(
-                    "Fluxo de execução concluído após confirmação pós-ACK. status=%s reason=%s",
+                    "Fluxo de execução concluído após confirmação pós-ACK. status=%s reason=%s stop_loss_status=%s stop_loss_reason=%s",
                     result.confirmation_status,
                     result.confirmation_reason,
+                    result.stop_loss_status,
+                    result.stop_loss_reason,
                 )
             else:
                 LOGGER.info("Tentativa de execução não enviada: %s", result.blocked_reason)
