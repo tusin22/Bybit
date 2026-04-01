@@ -159,6 +159,43 @@ class FakeExecutionClient:
         return [item for item in position_list if isinstance(item, dict)]
 
 
+class FakePrivateWsMonitor:
+    def __init__(self, *, should_close_position: bool, should_fail: bool = False) -> None:
+        self.should_close_position = should_close_position
+        self.should_fail = should_fail
+        self.calls = 0
+
+    def run_window(
+        self,
+        *,
+        symbol: str,
+        category: str,
+        side: str,
+        entry_order_id: str | None,
+        entry_order_link_id: str | None,
+        registered_tp_orders: list[dict[str, object]],
+        max_attempts: int,
+        interval_seconds: float,
+    ):
+        self.calls += 1
+        if self.should_fail:
+            from src.bybit.private_execution_ws import BybitPrivateWsMonitorError
+
+            raise BybitPrivateWsMonitorError("websocket down")
+        from src.bybit.private_execution_ws import PrivateWsWindowResult
+
+        return PrivateWsWindowResult(
+            started=True,
+            connected=True,
+            authenticated=True,
+            subscribed=True,
+            events_received=1,
+            position_closed_confirmed=self.should_close_position,
+            reason="fake",
+            matched_order_events=[],
+        )
+
+
 def _empty_order_list_response() -> dict[str, object]:
     return {"retCode": 0, "retMsg": "OK", "result": {"list": []}}
 
@@ -612,6 +649,51 @@ def test_cleanup_handles_registered_orders_that_already_disappeared() -> None:
     assert result.cleanup_missing_registered_tp_count >= 1
     assert result.cleanup_cancelled_count == 1
     assert result.monitor_status == "started_position_closed_cleanup_done"
+
+
+def test_monitor_uses_private_ws_for_position_close_then_cleanup() -> None:
+    tp_lookup = {
+        "tp-1": {"orderId": "tp-1", "orderLinkId": "tp1-btcusdt-abc", "orderStatus": "New"},
+        "tp-2": {"orderId": "tp-2", "orderLinkId": "tp2-btcusdt-def", "orderStatus": "New"},
+    }
+    client = FakeExecutionClient(
+        open_orders_responses=[_order_list_response({"orderId": "abc-123", "orderLinkId": "entry-btc", "orderStatus": "Filled"})],
+        open_order_lookup=tp_lookup,
+    )
+    ws_monitor = FakePrivateWsMonitor(should_close_position=True)
+    executor = TradeExecutor(
+        settings=_settings(dry_run=False, enable_order_execution=True),
+        execution_client=client,
+        private_ws_monitor=ws_monitor,
+    )
+
+    result = executor.execute_entry(plan=_eligible_plan())
+
+    assert result.monitor_websocket_started is True
+    assert result.monitor_websocket_subscribed is True
+    assert result.monitor_rest_fallback_used is False
+    assert result.cleanup_status == "cancelled_all"
+    assert client.position_calls == 0
+
+
+def test_monitor_falls_back_to_rest_when_private_ws_fails() -> None:
+    client = FakeExecutionClient(
+        open_orders_responses=[_order_list_response({"orderId": "abc-123", "orderLinkId": "entry-btc", "orderStatus": "Filled"})],
+        positions_response={"retCode": 0, "retMsg": "OK", "result": {"list": [{"side": "Buy", "size": "0.1"}]}},
+    )
+    ws_monitor = FakePrivateWsMonitor(should_close_position=False, should_fail=True)
+    executor = TradeExecutor(
+        settings=_settings(dry_run=False, enable_order_execution=True),
+        execution_client=client,
+        private_ws_monitor=ws_monitor,
+    )
+
+    result = executor.execute_entry(plan=_eligible_plan())
+
+    assert result.monitor_websocket_started is True
+    assert result.monitor_rest_fallback_used is True
+    assert result.monitor_status == "started_window_expired"
+    assert client.position_calls > 0
 
 
 def test_monitor_handles_partial_position_query_failure_safely() -> None:
