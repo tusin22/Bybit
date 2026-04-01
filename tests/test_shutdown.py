@@ -49,6 +49,10 @@ def _build_settings() -> Settings:
         execution_sizing_mode="fixed_notional_usdt",
         execution_fixed_notional_usdt=25.0,
         execution_fixed_qty=0.0,
+        tp1_percent=50.0,
+        tp2_percent=20.0,
+        tp3_percent=20.0,
+        tp4_percent=10.0,
     )
 
 

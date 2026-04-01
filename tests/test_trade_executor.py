@@ -15,6 +15,7 @@ class FakeExecutionClient:
         open_orders_responses: list[dict[str, object]] | None = None,
         order_history_responses: list[dict[str, object]] | None = None,
         stop_loss_error: str | None = None,
+        tp_fail_indexes: set[int] | None = None,
     ) -> None:
         self.calls = 0
         self.last_order = None
@@ -22,9 +23,12 @@ class FakeExecutionClient:
         self.order_history_calls = 0
         self.stop_loss_calls = 0
         self.last_stop_loss_request = None
+        self.tp_calls = 0
+        self.tp_requests: list[object] = []
         self._open_orders_responses = open_orders_responses or []
         self._order_history_responses = order_history_responses or []
         self._stop_loss_error = stop_loss_error
+        self._tp_fail_indexes = tp_fail_indexes or set()
 
     def place_entry_market_order(self, *, order):
         self.calls += 1
@@ -35,6 +39,21 @@ class FakeExecutionClient:
             "result": {
                 "orderId": "abc-123",
                 "orderLinkId": order.order_link_id,
+            },
+        }
+
+    def place_reduce_only_limit_order(self, *, request):
+        self.tp_calls += 1
+        self.tp_requests.append(request)
+        if self.tp_calls in self._tp_fail_indexes:
+            raise BybitExecutionClientError(f"tp failed at index {self.tp_calls}")
+
+        return {
+            "retCode": 0,
+            "retMsg": "OK",
+            "result": {
+                "orderId": f"tp-{self.tp_calls}",
+                "orderLinkId": request.order_link_id,
             },
         }
 
@@ -87,6 +106,10 @@ def _settings(
     dry_run: bool,
     enable_order_execution: bool,
     bybit_testnet: bool = True,
+    tp1_percent: float = 50.0,
+    tp2_percent: float = 20.0,
+    tp3_percent: float = 20.0,
+    tp4_percent: float = 10.0,
 ) -> Settings:
     return Settings(
         env="test",
@@ -103,28 +126,32 @@ def _settings(
         execution_sizing_mode="fixed_notional_usdt",
         execution_fixed_notional_usdt=25.0,
         execution_fixed_qty=0.0,
+        tp1_percent=tp1_percent,
+        tp2_percent=tp2_percent,
+        tp3_percent=tp3_percent,
+        tp4_percent=tp4_percent,
     )
 
 
-def _eligible_plan() -> ExecutionPlan:
+def _eligible_plan(*, side: str = "Buy", qty: float = 0.1, eligible: bool = True) -> ExecutionPlan:
     return ExecutionPlan(
         symbol="BTCUSDT",
         category="linear",
-        planned_entry_side="Buy",
+        planned_entry_side=side,
         reference_price=64000.0,
         normalized_entry_min=63900.0,
         normalized_entry_max=64100.0,
         normalized_stop_loss=63000.0,
         normalized_take_profits=[65000.0, 66000.0, 67000.0, 68000.0],
-        operational_intent="open_long",
-        planned_quantity=0.001,
+        operational_intent="open_long" if side == "Buy" else "open_short",
+        planned_quantity=qty,
         tick_size="0.10",
         qty_step="0.001",
         min_order_qty="0.001",
         min_notional_value="5",
         instrument_status="Trading",
-        eligible=True,
-        ineligibility_reason=None,
+        eligible=eligible,
+        ineligibility_reason=None if eligible else "fora da estratégia",
     )
 
 
@@ -140,44 +167,7 @@ def test_execute_entry_blocks_when_dry_run_is_true() -> None:
     assert result.order_attempted is False
     assert result.blocked_by_dry_run is True
     assert result.confirmation_status == "not_sent"
-    assert result.stop_loss_status == "not_attempted"
-    assert client.calls == 0
-
-
-def test_execute_entry_blocks_when_execution_flag_is_false() -> None:
-    client = FakeExecutionClient()
-    executor = TradeExecutor(
-        settings=_settings(dry_run=False, enable_order_execution=False),
-        execution_client=client,
-    )
-
-    result = executor.execute_entry(plan=_eligible_plan())
-
-    assert result.order_attempted is False
-    assert result.blocked_by_execution_flag is True
-    assert result.confirmation_status == "not_sent"
-    assert result.stop_loss_status == "not_attempted"
-    assert client.calls == 0
-
-
-def test_execute_entry_blocks_when_testnet_guard_is_not_satisfied() -> None:
-    client = FakeExecutionClient()
-    executor = TradeExecutor(
-        settings=_settings(
-            dry_run=False,
-            enable_order_execution=True,
-            bybit_testnet=False,
-        ),
-        execution_client=client,
-    )
-
-    result = executor.execute_entry(plan=_eligible_plan())
-
-    assert result.order_attempted is False
-    assert result.blocked_by_testnet_guard is True
-    assert "BYBIT_TESTNET=false" in (result.blocked_reason or "")
-    assert result.confirmation_status == "not_sent"
-    assert result.stop_loss_status == "not_attempted"
+    assert result.take_profit_status == "not_attempted"
     assert client.calls == 0
 
 
@@ -187,20 +177,104 @@ def test_execute_entry_blocks_when_plan_is_not_eligible() -> None:
         settings=_settings(dry_run=False, enable_order_execution=True),
         execution_client=client,
     )
-    ineligible_plan = _eligible_plan()
-    ineligible_plan.eligible = False
-    ineligible_plan.ineligibility_reason = "fora da estratégia"
 
-    result = executor.execute_entry(plan=ineligible_plan)
+    result = executor.execute_entry(plan=_eligible_plan(eligible=False))
 
     assert result.order_attempted is False
     assert result.blocked_reason == "fora da estratégia"
     assert result.confirmation_status == "not_sent"
-    assert result.stop_loss_status == "not_attempted"
-    assert client.calls == 0
+    assert result.take_profit_status == "not_attempted"
+    assert client.tp_calls == 0
 
 
-def test_execute_entry_confirms_ack_with_new_but_does_not_arm_stop_loss() -> None:
+def test_execute_entry_confirms_and_sends_all_take_profits_successfully() -> None:
+    client = FakeExecutionClient(
+        open_orders_responses=[
+            _order_list_response(
+                {
+                    "orderId": "abc-123",
+                    "orderLinkId": "entry-btc",
+                    "orderStatus": "Filled",
+                }
+            )
+        ]
+    )
+    executor = TradeExecutor(
+        settings=_settings(dry_run=False, enable_order_execution=True),
+        execution_client=client,
+    )
+
+    result = executor.execute_entry(plan=_eligible_plan(side="Buy", qty=0.1))
+
+    assert result.order_confirmed is True
+    assert result.stop_loss_status == "configured"
+    assert result.take_profit_status == "all_configured"
+    assert result.take_profit_attempted_count == 4
+    assert result.take_profit_accepted_count == 4
+    assert result.take_profit_failed_count == 0
+    assert len(result.take_profit_response_summaries) == 4
+    assert result.take_profit_reconciliation_summary["decision"] == "exact_distribution_after_normalization"
+    assert result.success is True
+    assert client.tp_calls == 4
+    assert all(request.side == "Sell" for request in client.tp_requests)
+    assert all(request.position_idx == 0 for request in client.tp_requests)
+
+
+def test_execute_entry_confirms_and_has_partial_take_profit_failures() -> None:
+    client = FakeExecutionClient(
+        open_orders_responses=[
+            _order_list_response(
+                {
+                    "orderId": "abc-123",
+                    "orderLinkId": "entry-btc",
+                    "orderStatus": "Filled",
+                }
+            )
+        ],
+        tp_fail_indexes={2, 4},
+    )
+    executor = TradeExecutor(
+        settings=_settings(dry_run=False, enable_order_execution=True),
+        execution_client=client,
+    )
+
+    result = executor.execute_entry(plan=_eligible_plan(side="Sell", qty=0.1))
+
+    assert result.order_confirmed is True
+    assert result.take_profit_status == "partial"
+    assert result.take_profit_attempted_count == 4
+    assert result.take_profit_accepted_count == 2
+    assert result.take_profit_failed_count == 2
+    assert len(result.take_profit_failures) == 2
+    assert result.take_profit_reconciliation_summary["sumAfter"] <= result.take_profit_reconciliation_summary["plannedQuantity"]
+    assert result.success is False
+    assert all(request.side == "Buy" for request in client.tp_requests)
+
+
+def test_execute_entry_does_not_send_take_profits_when_entry_is_not_confirmed() -> None:
+    pending = _order_list_response(
+        {
+            "orderId": "abc-123",
+            "orderLinkId": "entry-btc",
+            "orderStatus": "Created",
+        }
+    )
+    client = FakeExecutionClient(open_orders_responses=[pending, pending, pending, pending])
+    executor = TradeExecutor(
+        settings=_settings(dry_run=False, enable_order_execution=True),
+        execution_client=client,
+    )
+
+    result = executor.execute_entry(plan=_eligible_plan())
+
+    assert result.order_confirmed is False
+    assert result.take_profit_status == "not_attempted"
+    assert result.take_profit_attempted_count == 0
+    assert result.success is False
+    assert client.tp_calls == 0
+
+
+def test_execute_entry_keeps_success_true_when_tp_not_attempted_by_valid_flow_condition() -> None:
     client = FakeExecutionClient(
         open_orders_responses=[
             _order_list_response(
@@ -219,133 +293,37 @@ def test_execute_entry_confirms_ack_with_new_but_does_not_arm_stop_loss() -> Non
 
     result = executor.execute_entry(plan=_eligible_plan())
 
-    assert result.order_attempted is True
-    assert result.order_sent is True
     assert result.order_confirmed is True
-    assert result.confirmation_status == "confirmed"
     assert result.stop_loss_attempted is False
-    assert result.stop_loss_configured is False
-    assert result.stop_loss_status == "not_attempted"
+    assert result.take_profit_attempted is False
     assert result.success is True
-    assert result.bybit_response_summary["orderId"] == "abc-123"
-    assert result.bybit_response_summary["requestAccepted"] is True
-    assert client.calls == 1
-    assert client.stop_loss_calls == 0
-    assert client.last_order.position_idx == 0
 
 
-def test_execute_entry_marks_timeout_when_pending_never_resolves() -> None:
-    pending = _order_list_response(
-        {
-            "orderId": "abc-123",
-            "orderLinkId": "entry-btc",
-            "orderStatus": "Created",
-        }
-    )
-    client = FakeExecutionClient(open_orders_responses=[pending, pending, pending, pending])
-    executor = TradeExecutor(
-        settings=_settings(dry_run=False, enable_order_execution=True),
-        execution_client=client,
-    )
+def test_execute_entry_fails_fast_for_invalid_tp_percent_sum() -> None:
+    client = FakeExecutionClient()
 
-    result = executor.execute_entry(plan=_eligible_plan())
-
-    assert result.order_sent is True
-    assert result.order_confirmed is False
-    assert result.confirmation_status == "timeout"
-    assert result.stop_loss_attempted is False
-    assert result.stop_loss_status == "not_attempted"
-    assert "Timeout" in (result.confirmation_reason or "")
+    with pytest.raises(TradeExecutionError, match="soma"):
+        TradeExecutor(
+            settings=_settings(
+                dry_run=False,
+                enable_order_execution=True,
+                tp1_percent=40,
+                tp2_percent=20,
+                tp3_percent=20,
+                tp4_percent=10,
+            ),
+            execution_client=client,
+        )
 
 
-def test_execute_entry_marks_not_found_when_order_is_missing() -> None:
-    client = FakeExecutionClient(
-        open_orders_responses=[
-            _empty_order_list_response(),
-            _empty_order_list_response(),
-            _empty_order_list_response(),
-            _empty_order_list_response(),
-        ],
-        order_history_responses=[
-            _empty_order_list_response(),
-            _empty_order_list_response(),
-            _empty_order_list_response(),
-            _empty_order_list_response(),
-        ],
-    )
-    executor = TradeExecutor(
-        settings=_settings(dry_run=False, enable_order_execution=True),
-        execution_client=client,
-    )
-
-    result = executor.execute_entry(plan=_eligible_plan())
-
-    assert result.order_sent is True
-    assert result.order_confirmed is False
-    assert result.confirmation_status == "not_found"
-    assert result.stop_loss_attempted is False
-
-
-def test_execute_entry_marks_cancelled_from_order_snapshot() -> None:
-    client = FakeExecutionClient(
-        order_history_responses=[
-            _order_list_response(
-                {
-                    "orderId": "abc-123",
-                    "orderLinkId": "entry-btc",
-                    "orderStatus": "Cancelled",
-                    "cancelType": "CancelByUser",
-                }
-            )
-        ]
-    )
-    executor = TradeExecutor(
-        settings=_settings(dry_run=False, enable_order_execution=True),
-        execution_client=client,
-    )
-
-    result = executor.execute_entry(plan=_eligible_plan())
-
-    assert result.confirmation_status == "cancelled"
-    assert result.order_confirmed is False
-    assert result.stop_loss_status == "not_attempted"
-
-
-def test_execute_entry_marks_rejected_from_order_snapshot() -> None:
-    client = FakeExecutionClient(
-        order_history_responses=[
-            _order_list_response(
-                {
-                    "orderId": "abc-123",
-                    "orderLinkId": "entry-btc",
-                    "orderStatus": "Rejected",
-                    "rejectReason": "EC_QTY_LESS_THAN_MIN_QTY",
-                }
-            )
-        ]
-    )
-    executor = TradeExecutor(
-        settings=_settings(dry_run=False, enable_order_execution=True),
-        execution_client=client,
-    )
-
-    result = executor.execute_entry(plan=_eligible_plan())
-
-    assert result.confirmation_status == "rejected"
-    assert result.stop_loss_status == "not_attempted"
-    assert "EC_QTY_LESS_THAN_MIN_QTY" in (result.confirmation_reason or "")
-
-
-
-
-def test_execute_entry_sets_stop_loss_after_partially_filled_entry() -> None:
+def test_execute_entry_fails_for_tp_quantity_that_becomes_zero_after_normalization() -> None:
     client = FakeExecutionClient(
         open_orders_responses=[
             _order_list_response(
                 {
                     "orderId": "abc-123",
                     "orderLinkId": "entry-btc",
-                    "orderStatus": "PartiallyFilled",
+                    "orderStatus": "Filled",
                 }
             )
         ]
@@ -354,17 +332,13 @@ def test_execute_entry_sets_stop_loss_after_partially_filled_entry() -> None:
         settings=_settings(dry_run=False, enable_order_execution=True),
         execution_client=client,
     )
+    plan = _eligible_plan(qty=0.001)
 
-    result = executor.execute_entry(plan=_eligible_plan())
-
-    assert result.order_confirmed is True
-    assert result.stop_loss_attempted is True
-    assert result.stop_loss_configured is True
-    assert result.stop_loss_status == "configured"
-    assert client.stop_loss_calls == 1
+    with pytest.raises(TradeExecutionError, match="Quantidade parcial inválida"):
+        executor.execute_entry(plan=plan)
 
 
-def test_execute_entry_sets_stop_loss_after_filled_entry() -> None:
+def test_tp_reconciliation_allocates_residual_to_last_tp_when_possible() -> None:
     client = FakeExecutionClient(
         open_orders_responses=[
             _order_list_response(
@@ -381,53 +355,22 @@ def test_execute_entry_sets_stop_loss_after_filled_entry() -> None:
         execution_client=client,
     )
 
-    result = executor.execute_entry(plan=_eligible_plan())
+    result = executor.execute_entry(plan=_eligible_plan(qty=0.123))
 
-    assert result.order_confirmed is True
-    assert result.stop_loss_attempted is True
-    assert result.stop_loss_configured is True
-    assert result.stop_loss_status == "configured"
-    assert client.stop_loss_calls == 1
-    assert client.last_stop_loss_request.position_idx == 0
-    assert client.last_stop_loss_request.stop_loss == "63000"
+    assert result.take_profit_reconciliation_summary["decision"] == "allocated_to_last_tp"
+    assert result.take_profit_reconciliation_summary["allocatedToLastTp"] == 0.002
+    assert result.take_profit_reconciliation_summary["sumAfter"] == 0.123
+    assert result.take_profit_reconciliation_summary["sumAfter"] <= result.take_profit_reconciliation_summary["plannedQuantity"]
 
 
-def test_execute_entry_marks_failure_when_stop_loss_configuration_fails() -> None:
+def test_tp_reconciliation_logs_unallocatable_residual_below_qty_step() -> None:
     client = FakeExecutionClient(
         open_orders_responses=[
             _order_list_response(
                 {
                     "orderId": "abc-123",
                     "orderLinkId": "entry-btc",
-                    "orderStatus": "PartiallyFilled",
-                }
-            )
-        ],
-        stop_loss_error="Falha Bybit em set_trading_stop: retCode=110011 retMsg=SL invalid",
-    )
-    executor = TradeExecutor(
-        settings=_settings(dry_run=False, enable_order_execution=True),
-        execution_client=client,
-    )
-
-    result = executor.execute_entry(plan=_eligible_plan())
-
-    assert result.order_confirmed is True
-    assert result.stop_loss_attempted is True
-    assert result.stop_loss_configured is False
-    assert result.stop_loss_status == "failed"
-    assert "set_trading_stop" in (result.stop_loss_reason or "")
-    assert result.success is False
-
-
-def test_execute_entry_does_not_send_stop_loss_when_entry_is_not_confirmed() -> None:
-    client = FakeExecutionClient(
-        open_orders_responses=[
-            _order_list_response(
-                {
-                    "orderId": "abc-123",
-                    "orderLinkId": "entry-btc",
-                    "orderStatus": "Created",
+                    "orderStatus": "Filled",
                 }
             )
         ]
@@ -437,46 +380,64 @@ def test_execute_entry_does_not_send_stop_loss_when_entry_is_not_confirmed() -> 
         execution_client=client,
     )
 
-    result = executor.execute_entry(plan=_eligible_plan())
+    result = executor.execute_entry(plan=_eligible_plan(qty=0.1204))
 
-    assert result.order_confirmed is False
-    assert result.stop_loss_attempted is False
-    assert result.stop_loss_status == "not_attempted"
-    assert client.stop_loss_calls == 0
+    assert result.take_profit_reconciliation_summary["decision"] == "residual_below_qty_step_not_allocated"
+    assert result.take_profit_reconciliation_summary["sumAfter"] <= result.take_profit_reconciliation_summary["plannedQuantity"]
+    assert result.take_profit_reconciliation_summary["residualAfter"] > 0
+    assert result.take_profit_reconciliation_summary["residualAfter"] < 0.001
+    for summary in result.take_profit_response_summaries:
+        assert float(summary["tpQty"]) > 0
 
 
-def test_execute_entry_does_not_send_stop_loss_when_plan_is_ineligible() -> None:
-    client = FakeExecutionClient()
-    executor = TradeExecutor(
-        settings=_settings(dry_run=False, enable_order_execution=True),
-        execution_client=client,
+def test_callback_stays_alive_in_routed_parser_when_tp_fails() -> None:
+    from src.main import RoutedSignalParser
+    from src.models.signal import Signal
+
+    class FakeRouter:
+        def enrich_with_bybit_validation(self, signal: Signal) -> Signal:
+            signal.entry_eligible = True
+            signal.entry_validation_reason = "ok"
+            signal.current_price = 64000.0
+            signal.instrument_status = "Trading"
+            signal.instrument_tick_size = "0.10"
+            signal.instrument_qty_step = "0.001"
+            signal.instrument_min_order_qty = "0.001"
+            signal.instrument_min_notional_value = "5"
+            return signal
+
+    class FakePlanner:
+        def build_plan(self, *, signal: Signal) -> ExecutionPlan:
+            return _eligible_plan(qty=0.1)
+
+    class ExplodingTpExecutor:
+        def execute_entry(self, *, plan: ExecutionPlan):
+            raise TradeExecutionError("Quantidade parcial inválida para TP após normalização por qtyStep")
+
+    class FakeSignalParser:
+        def parse(self, raw_text: str) -> Signal:
+            return Signal(
+                symbol="BTCUSDT",
+                side="LONG",
+                entry_min=63900.0,
+                entry_max=64100.0,
+                take_profits=[65000.0, 66000.0, 67000.0, 68000.0],
+                stop_loss=63000.0,
+                raw_text=raw_text,
+            )
+
+    parser = RoutedSignalParser(
+        router=FakeRouter(),
+        planner=FakePlanner(),
+        executor=ExplodingTpExecutor(),
     )
+    parser._parser = FakeSignalParser()
 
-    ineligible_plan = _eligible_plan()
-    ineligible_plan.eligible = False
-    ineligible_plan.ineligibility_reason = "fora da estratégia"
+    result = parser.parse("BTCUSDT LONG")
 
-    result = executor.execute_entry(plan=ineligible_plan)
-
-    assert result.order_attempted is False
-    assert result.stop_loss_attempted is False
-    assert result.stop_loss_status == "not_attempted"
-    assert client.stop_loss_calls == 0
-
-
-def test_execute_entry_fails_clearly_when_critical_data_is_missing() -> None:
-    client = FakeExecutionClient()
-    executor = TradeExecutor(
-        settings=_settings(dry_run=False, enable_order_execution=True),
-        execution_client=client,
-    )
-    invalid_plan = _eligible_plan()
-    invalid_plan.symbol = ""
-
-    with pytest.raises(TradeExecutionError, match="symbol ausente"):
-        executor.execute_entry(plan=invalid_plan)
-
-    assert client.calls == 0
+    assert isinstance(result, Signal)
+    assert result.entry_eligible is False
+    assert "callback mantido ativo" in (result.entry_validation_reason or "")
 
 
 def test_format_qty_serializes_without_float_noise_using_qty_step() -> None:

@@ -18,6 +18,17 @@ class BybitOrderRequest:
 
 
 @dataclass(slots=True)
+class BybitReduceOnlyLimitOrderRequest:
+    category: str
+    symbol: str
+    side: str
+    qty: str
+    price: str
+    position_idx: int
+    order_link_id: str | None = None
+
+
+@dataclass(slots=True)
 class BybitSetTradingStopRequest:
     category: str
     symbol: str
@@ -58,6 +69,39 @@ class BybitExecutionClient:
         }
         if order.order_link_id:
             request_payload["orderLinkId"] = order.order_link_id
+
+        response = self._http.place_order(**request_payload)
+        self._assert_success(response, operation="place_order")
+        return response
+
+    def place_reduce_only_limit_order(
+        self,
+        *,
+        request: BybitReduceOnlyLimitOrderRequest,
+    ) -> dict[str, object]:
+        if not self._has_auth:
+            raise BybitExecutionClientError(
+                "Credenciais Bybit ausentes: BYBIT_API_KEY e BYBIT_API_SECRET são obrigatórios para execução."
+            )
+
+        if request.category != "linear":
+            raise BybitExecutionClientError(
+                "Categoria inválida para esta fase de execução: apenas linear é suportada."
+            )
+
+        request_payload: dict[str, object] = {
+            "category": request.category,
+            "symbol": request.symbol,
+            "side": request.side,
+            "orderType": "Limit",
+            "qty": request.qty,
+            "price": request.price,
+            "timeInForce": "GTC",
+            "positionIdx": request.position_idx,
+            "reduceOnly": True,
+        }
+        if request.order_link_id:
+            request_payload["orderLinkId"] = request.order_link_id
 
         response = self._http.place_order(**request_payload)
         self._assert_success(response, operation="place_order")
