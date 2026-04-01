@@ -24,8 +24,9 @@ Projeto em Python para processar sinais de trade recebidos via Telegram, com evo
 - Take profits parciais pós-confirmação com **4 ordens Limit** separadas em `category=linear`, `positionIdx=0`, `reduceOnly=true` (distribuição configurável por `.env`).
 - Limpeza incremental de ordens penduradas com foco nos IDs de TP da execução atual (REST curto e controlado, sem monitor contínuo).
 - Monitor curto da execução atual após entrada+proteções para acompanhar fechamento da posição e concluir cleanup com janela limitada.
+- Monitor curto preferencial via **websocket privado Bybit V5** (`order` e `position`) restrito à execução atual, com fallback REST seguro.
 - **Sem trailing stop nesta fase**.
-- **Sem monitor contínuo de posição e sem websocket nesta fase**.
+- **Sem monitor contínuo global de posição nesta fase**.
 - Confirmação pós-ACK implementada com polling REST curto e controlado (sem websocket).
 
 ## Requisitos
@@ -135,14 +136,15 @@ No startup, o listener valida/resolve `TELEGRAM_SOURCE_CHAT`; se o valor for inv
   - status da limpeza pós-fechamento de posição (tentativa, quantidade encontrada/cancelada/falha e razões).
 - Após confirmação e configuração de proteção, há um monitor curto da execução atual:
   - usa os IDs da entrada e dos TPs aceitos desta execução;
-  - consulta posição via REST (`Get Position Info`) e snapshots de ordens via REST (`Get Open & Closed Orders` / `Get Order History`) em poucas tentativas;
+  - tenta confirmar fechamento via websocket privado (`order` e `position`) para a execução atual;
+  - se o websocket não confirmar estado final na janela curta, aciona fallback REST seguro (`Get Position Info`, `Get Open & Closed Orders`, `Get Order History`);
   - se detectar posição fechada dentro da janela, aciona cleanup para cancelar apenas TPs remanescentes desta execução;
   - registra tentativas, status final do monitor e ordens remanescentes no `ExecutionResult`;
   - encerra com timeout explícito quando a posição não fecha na janela curta.
 - A limpeza incremental continua com foco nos IDs dos TPs da execução atual:
   - registra os `orderId` / `orderLinkId` dos TPs aceitos na execução atual;
   - quando acionada pelo monitor curto, tenta cancelar apenas os TPs registrados desta execução;
-  - sem loop infinito, sem monitor contínuo e sem websocket nesta fase.
+- sem loop infinito e sem monitor contínuo global nesta fase.
 - Interpretação de `success` no resultado final:
   - `True` apenas quando entrada está confirmada, stop loss (quando tentado) foi configurado e TPs (quando tentados) não tiveram falhas;
   - `False` quando entrada não confirma, stop loss falha ou qualquer TP falha (parcial/total).

@@ -76,6 +76,11 @@ class ExecutionResult:
     cleanup_failed_count: int
     cleanup_failure_reasons: list[dict[str, object]]
     monitor_started: bool
+    monitor_websocket_started: bool
+    monitor_websocket_connected: bool
+    monitor_websocket_authenticated: bool
+    monitor_websocket_subscribed: bool
+    monitor_rest_fallback_used: bool
     monitor_attempts: int
     monitor_position_closed_within_window: bool
     monitor_cleanup_completed_within_window: bool

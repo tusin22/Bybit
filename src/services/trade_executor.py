@@ -14,6 +14,10 @@ from src.bybit.execution_client import (
     BybitReduceOnlyLimitOrderRequest,
     BybitSetTradingStopRequest,
 )
+from src.bybit.private_execution_ws import (
+    BybitPrivateExecutionWsMonitor,
+    BybitPrivateWsMonitorError,
+)
 from src.config import Settings
 from src.models.execution_plan import ExecutionPlan
 from src.models.execution_result import ConfirmationStatus, ExecutionResult, TakeProfitStatus
@@ -87,6 +91,11 @@ class _CleanupResult:
 @dataclass(frozen=True, slots=True)
 class _ExecutionMonitorResult:
     started: bool
+    websocket_started: bool
+    websocket_connected: bool
+    websocket_authenticated: bool
+    websocket_subscribed: bool
+    rest_fallback_used: bool
     attempts: int
     position_closed_within_window: bool
     cleanup_completed_within_window: bool
@@ -108,6 +117,7 @@ class TradeExecutor:
         *,
         settings: Settings,
         execution_client: BybitExecutionClient,
+        private_ws_monitor: BybitPrivateExecutionWsMonitor | None = None,
     ) -> None:
         self._flags = _ExecutionFlags(
             dry_run=settings.dry_run,
@@ -124,6 +134,7 @@ class TradeExecutor:
         )
         self._validate_take_profit_distribution(self._tp_distribution.percents)
         self._execution_client = execution_client
+        self._private_ws_monitor = private_ws_monitor
 
     def execute_entry(self, *, plan: ExecutionPlan) -> ExecutionResult:
         if self._flags.dry_run:
@@ -401,6 +412,11 @@ class TradeExecutor:
         )
         execution_monitor = _ExecutionMonitorResult(
             started=False,
+            websocket_started=False,
+            websocket_connected=False,
+            websocket_authenticated=False,
+            websocket_subscribed=False,
+            rest_fallback_used=False,
             attempts=0,
             position_closed_within_window=False,
             cleanup_completed_within_window=False,
@@ -476,6 +492,11 @@ class TradeExecutor:
             cleanup_failed_count=cleanup.failed_count,
             cleanup_failure_reasons=cleanup.failures,
             monitor_started=execution_monitor.started,
+            monitor_websocket_started=execution_monitor.websocket_started,
+            monitor_websocket_connected=execution_monitor.websocket_connected,
+            monitor_websocket_authenticated=execution_monitor.websocket_authenticated,
+            monitor_websocket_subscribed=execution_monitor.websocket_subscribed,
+            monitor_rest_fallback_used=execution_monitor.rest_fallback_used,
             monitor_attempts=execution_monitor.attempts,
             monitor_position_closed_within_window=execution_monitor.position_closed_within_window,
             monitor_cleanup_completed_within_window=execution_monitor.cleanup_completed_within_window,
@@ -504,13 +525,84 @@ class TradeExecutor:
         entry_order_link_id: str | None,
         registered_tp_orders: list[dict[str, object]],
     ) -> _ExecutionMonitorResult:
-        failures: list[dict[str, object]] = []
-        position_exists: bool | None = None
-        position_closed_within_window = False
-        attempts_used = 0
+        ws_started = self._private_ws_monitor is not None
+        ws_connected = False
+        ws_authenticated = False
+        ws_subscribed = False
+        rest_fallback_used = False
 
+        if self._private_ws_monitor is not None:
+            LOGGER.info(
+                "Monitor websocket privado da execução iniciado. symbol=%s category=%s side=%s entryOrderId=%s entryOrderLinkId=%s registered_tps=%s",
+                symbol,
+                category,
+                side,
+                entry_order_id,
+                entry_order_link_id,
+                len(registered_tp_orders),
+            )
+            try:
+                ws_result = self._private_ws_monitor.run_window(
+                    symbol=symbol,
+                    category=category,
+                    side=side,
+                    entry_order_id=entry_order_id,
+                    entry_order_link_id=entry_order_link_id,
+                    registered_tp_orders=registered_tp_orders,
+                    max_attempts=_EXECUTION_MONITOR_MAX_ATTEMPTS,
+                    interval_seconds=_EXECUTION_MONITOR_INTERVAL_SECONDS,
+                )
+                ws_connected = ws_result.connected
+                ws_authenticated = ws_result.authenticated
+                ws_subscribed = ws_result.subscribed
+                LOGGER.info(
+                    "Monitor websocket privado finalizado. symbol=%s category=%s side=%s connected=%s authenticated=%s subscribed=%s events_received=%s reason=%s position_closed=%s",
+                    symbol,
+                    category,
+                    side,
+                    ws_result.connected,
+                    ws_result.authenticated,
+                    ws_result.subscribed,
+                    ws_result.events_received,
+                    ws_result.reason,
+                    ws_result.position_closed_confirmed,
+                )
+                if ws_result.position_closed_confirmed:
+                    return self._cleanup_after_position_closed(
+                        symbol=symbol,
+                        category=category,
+                        side=side,
+                        entry_order_id=entry_order_id,
+                        entry_order_link_id=entry_order_link_id,
+                        registered_tp_orders=registered_tp_orders,
+                        attempts_used=_EXECUTION_MONITOR_MAX_ATTEMPTS,
+                        websocket_started=ws_started,
+                        websocket_connected=ws_connected,
+                        websocket_authenticated=ws_authenticated,
+                        websocket_subscribed=ws_subscribed,
+                        rest_fallback_used=False,
+                    )
+                rest_fallback_used = True
+                LOGGER.warning(
+                    "Fallback REST acionado: websocket sem confirmação final dentro da janela. symbol=%s category=%s side=%s",
+                    symbol,
+                    category,
+                    side,
+                )
+            except BybitPrivateWsMonitorError as exc:
+                rest_fallback_used = True
+                LOGGER.warning(
+                    "Fallback REST acionado: falha no websocket privado. symbol=%s category=%s side=%s reason=%s",
+                    symbol,
+                    category,
+                    side,
+                    exc,
+                )
+
+        attempts_used = 0
+        position_closed_within_window = False
         LOGGER.info(
-            "Monitor curto da execução iniciado. symbol=%s category=%s side=%s entryOrderId=%s entryOrderLinkId=%s registered_tps=%s max_attempts=%s interval_seconds=%s",
+            "Monitor curto REST da execução iniciado. symbol=%s category=%s side=%s entryOrderId=%s entryOrderLinkId=%s registered_tps=%s max_attempts=%s interval_seconds=%s",
             symbol,
             category,
             side,
@@ -520,23 +612,18 @@ class TradeExecutor:
             _EXECUTION_MONITOR_MAX_ATTEMPTS,
             _EXECUTION_MONITOR_INTERVAL_SECONDS,
         )
-
         for attempt in range(1, _EXECUTION_MONITOR_MAX_ATTEMPTS + 1):
             attempts_used = attempt
             try:
                 position_exists = self._has_open_position(symbol=symbol, category=category)
             except BybitExecutionClientError as exc:
-                LOGGER.error(
-                    "Falha ao verificar posição para limpeza de TPs pendurados. symbol=%s category=%s side=%s attempt=%s/%s reason=%s",
-                    symbol,
-                    category,
-                    side,
-                    attempt,
-                    _EXECUTION_MONITOR_MAX_ATTEMPTS,
-                    exc,
-                )
                 return _ExecutionMonitorResult(
                     started=True,
+                    websocket_started=ws_started,
+                    websocket_connected=ws_connected,
+                    websocket_authenticated=ws_authenticated,
+                    websocket_subscribed=ws_subscribed,
+                    rest_fallback_used=rest_fallback_used,
                     attempts=attempts_used,
                     position_closed_within_window=False,
                     cleanup_completed_within_window=False,
@@ -549,21 +636,9 @@ class TradeExecutor:
                     cleanup_missing_registered_tp_count=0,
                     cleanup_failures=[{"reason": str(exc), "step": "position_check"}],
                 )
-
-            LOGGER.info(
-                "Verificação de posição para limpeza. symbol=%s category=%s side=%s has_open_position=%s attempt=%s/%s",
-                symbol,
-                category,
-                side,
-                position_exists,
-                attempt,
-                _EXECUTION_MONITOR_MAX_ATTEMPTS,
-            )
-
             if position_exists is False:
                 position_closed_within_window = True
                 break
-
             if attempt < _EXECUTION_MONITOR_MAX_ATTEMPTS:
                 time.sleep(_EXECUTION_MONITOR_INTERVAL_SECONDS)
 
@@ -575,6 +650,11 @@ class TradeExecutor:
             )
             return _ExecutionMonitorResult(
                 started=True,
+                websocket_started=ws_started,
+                websocket_connected=ws_connected,
+                websocket_authenticated=ws_authenticated,
+                websocket_subscribed=ws_subscribed,
+                rest_fallback_used=rest_fallback_used,
                 attempts=attempts_used,
                 position_closed_within_window=False,
                 cleanup_completed_within_window=False,
@@ -588,16 +668,46 @@ class TradeExecutor:
                 cleanup_failures=[],
             )
 
+        return self._cleanup_after_position_closed(
+            symbol=symbol,
+            category=category,
+            side=side,
+            entry_order_id=entry_order_id,
+            entry_order_link_id=entry_order_link_id,
+            registered_tp_orders=registered_tp_orders,
+            attempts_used=attempts_used,
+            websocket_started=ws_started,
+            websocket_connected=ws_connected,
+            websocket_authenticated=ws_authenticated,
+            websocket_subscribed=ws_subscribed,
+            rest_fallback_used=rest_fallback_used,
+        )
+
+    def _cleanup_after_position_closed(
+        self,
+        *,
+        symbol: str,
+        category: str,
+        side: str,
+        entry_order_id: str | None,
+        entry_order_link_id: str | None,
+        registered_tp_orders: list[dict[str, object]],
+        attempts_used: int,
+        websocket_started: bool,
+        websocket_connected: bool,
+        websocket_authenticated: bool,
+        websocket_subscribed: bool,
+        rest_fallback_used: bool,
+    ) -> _ExecutionMonitorResult:
+        failures: list[dict[str, object]] = []
         remaining_tp_orders: list[dict[str, object]] = []
         missing_registered_tp_count = 0
         for tp_order in registered_tp_orders:
-            tp_order_id = _as_optional_string(tp_order.get("orderId"))
-            tp_order_link_id = _as_optional_string(tp_order.get("orderLinkId"))
             snapshot = self._fetch_order_snapshot(
                 category=category,
                 symbol=symbol,
-                order_id=tp_order_id,
-                order_link_id=tp_order_link_id,
+                order_id=_as_optional_string(tp_order.get("orderId")),
+                order_link_id=_as_optional_string(tp_order.get("orderLinkId")),
             )
             if snapshot is None:
                 missing_registered_tp_count += 1
@@ -606,23 +716,14 @@ class TradeExecutor:
 
         found_count = len(remaining_tp_orders)
         cancelled_count = 0
-
-        LOGGER.info(
-            "Limpeza de ordens penduradas iniciada. symbol=%s category=%s side=%s entryOrderId=%s entryOrderLinkId=%s position_exists=%s registered_tps=%s remaining_registered_tps=%s missing_registered_tps=%s",
-            symbol,
-            category,
-            side,
-            entry_order_id,
-            entry_order_link_id,
-            position_exists,
-            len(registered_tp_orders),
-            found_count,
-            missing_registered_tp_count,
-        )
-
         if found_count == 0:
             return _ExecutionMonitorResult(
                 started=True,
+                websocket_started=websocket_started,
+                websocket_connected=websocket_connected,
+                websocket_authenticated=websocket_authenticated,
+                websocket_subscribed=websocket_subscribed,
+                rest_fallback_used=rest_fallback_used,
                 attempts=attempts_used,
                 position_closed_within_window=True,
                 cleanup_completed_within_window=True,
@@ -648,40 +749,14 @@ class TradeExecutor:
                 )
                 cancelled_count += 1
             except BybitExecutionClientError as exc:
-                failures.append(
-                    {
-                        "orderId": order_id,
-                        "orderLinkId": order_link_id,
-                        "reason": str(exc),
-                    }
-                )
+                failures.append({"orderId": order_id, "orderLinkId": order_link_id, "reason": str(exc)})
 
         failed_count = len(failures)
         cleanup_status = "cancelled_all"
         if failed_count > 0 and cancelled_count > 0:
             cleanup_status = "partial"
-        elif failed_count > 0 and cancelled_count == 0:
+        elif failed_count > 0:
             cleanup_status = "failed"
-
-        LOGGER.info(
-            "Limpeza de ordens penduradas concluída. symbol=%s category=%s side=%s position_exists=%s found=%s cancelled=%s failed=%s",
-            symbol,
-            category,
-            side,
-            position_exists,
-            found_count,
-            cancelled_count,
-            failed_count,
-        )
-
-        if failures:
-            LOGGER.error(
-                "Falhas ao cancelar ordens penduradas. symbol=%s category=%s side=%s failures=%s",
-                symbol,
-                category,
-                side,
-                failures,
-            )
 
         remaining_after_cleanup = self._fetch_remaining_registered_orders(
             category=category,
@@ -689,19 +764,18 @@ class TradeExecutor:
             registered_tp_orders=registered_tp_orders,
         )
         cleanup_completed = cleanup_status in {"cancelled_all", "not_needed"}
-        monitor_status = (
-            "started_position_closed_cleanup_done"
-            if cleanup_completed
-            else "started_failed_with_safe_fallback"
-        )
-
         return _ExecutionMonitorResult(
             started=True,
+            websocket_started=websocket_started,
+            websocket_connected=websocket_connected,
+            websocket_authenticated=websocket_authenticated,
+            websocket_subscribed=websocket_subscribed,
+            rest_fallback_used=rest_fallback_used,
             attempts=attempts_used,
             position_closed_within_window=True,
             cleanup_completed_within_window=cleanup_completed,
             remaining_execution_orders=remaining_after_cleanup,
-            status=monitor_status,
+            status=("started_position_closed_cleanup_done" if cleanup_completed else "started_failed_with_safe_fallback"),
             cleanup_status=cleanup_status,
             cleanup_found_count=found_count,
             cleanup_cancelled_count=cancelled_count,
@@ -1054,6 +1128,11 @@ class TradeExecutor:
             cleanup_failed_count=0,
             cleanup_failure_reasons=[],
             monitor_started=False,
+            monitor_websocket_started=False,
+            monitor_websocket_connected=False,
+            monitor_websocket_authenticated=False,
+            monitor_websocket_subscribed=False,
+            monitor_rest_fallback_used=False,
             monitor_attempts=0,
             monitor_position_closed_within_window=False,
             monitor_cleanup_completed_within_window=False,
