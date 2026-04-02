@@ -278,16 +278,16 @@ def _resolve_trade_status(
     if result.order_sent and not result.order_confirmed:
         return "entry_sent"
 
+    if result.monitor_position_closed_within_window:
+        if result.success and result.cleanup_status in {"cancelled_all", "not_needed"}:
+            return "closed_clean"
+        return "closed_with_failures"
+
     if result.monitor_started and result.monitor_status in {
         "started_window_expired",
         "started_failed_with_safe_fallback",
     }:
         return "monitoring_inconclusive"
-
-    if result.monitor_position_closed_within_window:
-        if result.success and result.cleanup_status in {"cancelled_all", "not_needed"}:
-            return "closed_clean"
-        return "closed_with_failures"
 
     if result.stop_loss_status == "configured" and result.take_profit_status == "all_configured":
         return "protected"
