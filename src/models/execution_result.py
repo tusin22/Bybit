@@ -42,6 +42,17 @@ ExecutionMonitorStatus = Literal[
     "started_failed_with_safe_fallback",
 ]
 
+TradeStatus = Literal[
+    "blocked",
+    "safe_failure",
+    "entry_sent",
+    "entry_confirmed",
+    "protected",
+    "monitoring_inconclusive",
+    "closed_clean",
+    "closed_with_failures",
+]
+
 
 @dataclass(slots=True)
 class ExecutionResult:

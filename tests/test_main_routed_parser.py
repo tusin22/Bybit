@@ -204,10 +204,13 @@ def test_routed_signal_parser_writes_complete_journal_on_success() -> None:
     assert len(journal.calls) == 1
     payload = journal.calls[0]["payload"]
     assert payload["status"] == "completed"
+    assert payload["tradeStatus"] == "monitoring_inconclusive"
     assert payload["rawText"] == "BTCUSDT LONG"
-    assert payload["executionPlan"] is not None
-    assert payload["executionResult"] is not None
-    assert payload["relevantIds"]["entryOrderId"] == "abc-123"
+    assert payload["plan"] is not None
+    assert payload["execution"]["result"] is not None
+    assert payload["execution"]["ids"]["entryOrderId"] == "abc-123"
+    assert payload["summary"]["tradeStatus"] == "monitoring_inconclusive"
+    assert payload["summary"]["monitorStatus"] == "started_failed_with_safe_fallback"
 
 
 def test_routed_signal_parser_writes_partial_journal_on_safe_failure() -> None:
@@ -226,8 +229,9 @@ def test_routed_signal_parser_writes_partial_journal_on_safe_failure() -> None:
     assert len(journal.calls) == 1
     payload = journal.calls[0]["payload"]
     assert payload["status"] == "safe_failure"
-    assert payload["executionPlan"] is not None
-    assert payload["executionResult"] is None
+    assert payload["tradeStatus"] == "safe_failure"
+    assert payload["plan"] is not None
+    assert payload["execution"]["result"] is None
     assert payload["errors"][0]["stage"] == "execution"
 
 
@@ -244,3 +248,163 @@ def test_routed_signal_parser_keeps_callback_alive_when_journal_write_fails() ->
 
     assert isinstance(result, ExecutionResult)
     assert result.order_confirmed is True
+
+
+class BlockedExecutor:
+    def execute_entry(self, *, plan: ExecutionPlan):
+        return ExecutionResult(
+            symbol=plan.symbol,
+            category=plan.category,
+            side=plan.planned_entry_side,
+            entry_status="not_sent",
+            order_attempted=False,
+            order_sent=False,
+            order_confirmed=False,
+            stop_loss_attempted=False,
+            stop_loss_configured=False,
+            stop_loss_status="not_attempted",
+            stop_loss_reason=None,
+            take_profit_attempted=False,
+            take_profit_status="not_attempted",
+            take_profit_attempted_count=0,
+            take_profit_accepted_count=0,
+            take_profit_failed_count=0,
+            take_profit_failures=[],
+            registered_take_profit_orders=[],
+            take_profit_reconciliation_summary={},
+            cleanup_attempted=False,
+            cleanup_status="not_attempted",
+            cleanup_position_exists=None,
+            cleanup_position_closed_within_window=False,
+            cleanup_window_attempts=0,
+            cleanup_remaining_registered_tp_count=0,
+            cleanup_missing_registered_tp_count=0,
+            cleanup_found_count=0,
+            cleanup_cancelled_count=0,
+            cleanup_failed_count=0,
+            cleanup_failure_reasons=[],
+            monitor_started=False,
+            monitor_websocket_started=False,
+            monitor_websocket_connected=False,
+            monitor_websocket_authenticated=False,
+            monitor_websocket_subscribed=False,
+            monitor_websocket_execution_stream_subscribed=False,
+            monitor_websocket_execution_events_relevant_count=0,
+            monitor_websocket_execution_fill_summary={},
+            monitor_rest_fallback_used=False,
+            monitor_attempts=0,
+            monitor_position_closed_within_window=False,
+            monitor_cleanup_completed_within_window=False,
+            monitor_remaining_execution_orders=[],
+            monitor_status="not_started",
+            monitor_final_decision_source=None,
+            monitor_final_decision_reason="blocked_by_protection",
+            blocked_by_dry_run=True,
+            blocked_by_execution_flag=False,
+            blocked_by_testnet_guard=False,
+            blocked_reason="DRY_RUN ativo",
+            confirmation_status="not_sent",
+            confirmation_reason="order not sent",
+            bybit_response_summary={},
+            stop_loss_response_summary={},
+            take_profit_response_summaries=[],
+            client_order_context=None,
+            success=False,
+        )
+
+
+def test_routed_signal_parser_sets_trade_status_blocked() -> None:
+    journal = RecordingJournalService()
+    parser = RoutedSignalParser(
+        router=FakeRouter(),
+        planner=FakePlanner(),
+        executor=BlockedExecutor(),
+        journal_service=journal,
+    )
+    parser._parser = FakeSignalParser()
+
+    parser.parse("BTCUSDT LONG")
+
+    payload = journal.calls[0]["payload"]
+    assert payload["tradeStatus"] == "blocked"
+    assert payload["summary"]["tradeStatus"] == "blocked"
+
+
+class ClosedCleanExecutor:
+    def execute_entry(self, *, plan: ExecutionPlan):
+        return ExecutionResult(
+            symbol=plan.symbol,
+            category=plan.category,
+            side=plan.planned_entry_side,
+            entry_status="confirmed",
+            order_attempted=True,
+            order_sent=True,
+            order_confirmed=True,
+            stop_loss_attempted=True,
+            stop_loss_configured=True,
+            stop_loss_status="configured",
+            stop_loss_reason=None,
+            take_profit_attempted=True,
+            take_profit_status="all_configured",
+            take_profit_attempted_count=4,
+            take_profit_accepted_count=4,
+            take_profit_failed_count=0,
+            take_profit_failures=[],
+            registered_take_profit_orders=[],
+            take_profit_reconciliation_summary={},
+            cleanup_attempted=True,
+            cleanup_status="cancelled_all",
+            cleanup_position_exists=False,
+            cleanup_position_closed_within_window=True,
+            cleanup_window_attempts=1,
+            cleanup_remaining_registered_tp_count=0,
+            cleanup_missing_registered_tp_count=0,
+            cleanup_found_count=0,
+            cleanup_cancelled_count=0,
+            cleanup_failed_count=0,
+            cleanup_failure_reasons=[],
+            monitor_started=True,
+            monitor_websocket_started=True,
+            monitor_websocket_connected=True,
+            monitor_websocket_authenticated=True,
+            monitor_websocket_subscribed=True,
+            monitor_websocket_execution_stream_subscribed=False,
+            monitor_websocket_execution_events_relevant_count=0,
+            monitor_websocket_execution_fill_summary={},
+            monitor_rest_fallback_used=False,
+            monitor_attempts=1,
+            monitor_position_closed_within_window=True,
+            monitor_cleanup_completed_within_window=True,
+            monitor_remaining_execution_orders=[],
+            monitor_status="started_position_closed_cleanup_done",
+            monitor_final_decision_source="websocket_position",
+            monitor_final_decision_reason="closed_and_cleaned",
+            blocked_by_dry_run=False,
+            blocked_by_execution_flag=False,
+            blocked_by_testnet_guard=False,
+            blocked_reason=None,
+            confirmation_status="confirmed",
+            confirmation_reason="confirmed",
+            bybit_response_summary={"orderId": "entry-1", "orderLinkId": "entry-link", "successReason": "ok"},
+            stop_loss_response_summary={},
+            take_profit_response_summaries=[],
+            client_order_context="entry-link",
+            success=True,
+        )
+
+
+def test_routed_signal_parser_sets_trade_status_closed_clean() -> None:
+    journal = RecordingJournalService()
+    parser = RoutedSignalParser(
+        router=FakeRouter(),
+        planner=FakePlanner(),
+        executor=ClosedCleanExecutor(),
+        journal_service=journal,
+    )
+    parser._parser = FakeSignalParser()
+
+    parser.parse("BTCUSDT LONG")
+
+    payload = journal.calls[0]["payload"]
+    assert payload["tradeStatus"] == "closed_clean"
+    assert payload["summary"]["tradeStatus"] == "closed_clean"
