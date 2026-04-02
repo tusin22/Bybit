@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 from src.bybit import (
     BybitClientError,
@@ -11,7 +12,11 @@ from src.bybit import (
 )
 from src.bybit.private_execution_ws import BybitPrivateExecutionWsMonitor
 from src.config import load_settings
+from src.models.execution_plan import ExecutionPlan
+from src.models.execution_result import ExecutionResult
+from src.models.signal import Signal
 from src.parsing.vectra_parser import VectraSignalParser
+from src.services.execution_journal import ExecutionJournalService
 from src.services.execution_planner import ExecutionPlanner
 from src.services.signal_router import SignalRouter
 from src.services.trade_executor import TradeExecutionError, TradeExecutor
@@ -29,19 +34,29 @@ class RoutedSignalParser:
         router: SignalRouter,
         planner: ExecutionPlanner,
         executor: TradeExecutor,
+        journal_service: ExecutionJournalService | None = None,
     ) -> None:
         self._parser = VectraSignalParser()
         self._router = router
         self._planner = planner
         self._executor = executor
+        self._journal_service = journal_service
 
     def parse(self, raw_text: str):
-        signal = self._parser.parse(raw_text)
+        signal: Signal | None = None
+        plan: ExecutionPlan | None = None
+        result: ExecutionResult | None = None
+        safe_failure_reason: str | None = None
+        journal_status = "unknown"
+        flow_errors: list[dict[str, str]] = []
 
         try:
+            signal = self._parser.parse(raw_text)
             enriched_signal = self._router.enrich_with_bybit_validation(signal)
             plan = self._planner.build_plan(signal=enriched_signal)
             result = self._executor.execute_entry(plan=plan)
+            journal_status = "completed"
+
             if result.order_sent:
                 LOGGER.info(
                     "Fluxo de execução concluído após confirmação pós-ACK. entry_status=%s reason=%s stop_loss_status=%s stop_loss_reason=%s take_profit_status=%s tp_attempted=%s tp_accepted=%s tp_failed=%s registered_tps=%s cleanup_status=%s cleanup_attempted=%s cleanup_position_closed_within_window=%s cleanup_remaining_registered_tps=%s cleanup_missing_registered_tps=%s cleanup_cancelled=%s cleanup_failed=%s monitor_started=%s monitor_ws_started=%s monitor_ws_connected=%s monitor_ws_authenticated=%s monitor_ws_subscribed=%s monitor_ws_execution_subscribed=%s monitor_ws_execution_events=%s monitor_ws_execution_partial_or_total_fill=%s monitor_rest_fallback_used=%s monitor_attempts=%s monitor_position_closed=%s monitor_cleanup_completed=%s monitor_status=%s monitor_decision_source=%s monitor_decision_reason=%s monitor_remaining_orders=%s",
@@ -82,12 +97,20 @@ class RoutedSignalParser:
                 LOGGER.info("Tentativa de execução não enviada: %s", result.blocked_reason)
             return result
         except BybitClientError as exc:
+            journal_status = "safe_failure"
+            safe_failure_reason = f"Falha ao validar sinal na Bybit (read-only): {exc}"
+            flow_errors.append({"stage": "validation", "type": type(exc).__name__, "message": str(exc)})
+            if signal is None:
+                raise
             signal.entry_eligible = False
-            signal.entry_validation_reason = (
-                "Falha ao validar sinal na Bybit (read-only): " f"{exc}"
-            )
+            signal.entry_validation_reason = safe_failure_reason
             return signal
         except (BybitExecutionClientError, TradeExecutionError) as exc:
+            journal_status = "safe_failure"
+            safe_failure_reason = f"Falha ao executar ordem na Bybit; callback mantido ativo: {exc}"
+            flow_errors.append({"stage": "execution", "type": type(exc).__name__, "message": str(exc)})
+            if signal is None or plan is None:
+                raise
             LOGGER.error(
                 "Falha segura ao executar ordem de entrada: %s | symbol=%s category=%s planned_quantity=%s instrument_qty_step=%s",
                 exc,
@@ -97,10 +120,86 @@ class RoutedSignalParser:
                 plan.qty_step,
             )
             signal.entry_eligible = False
-            signal.entry_validation_reason = (
-                "Falha ao executar ordem na Bybit; callback mantido ativo: " f"{exc}"
-            )
+            signal.entry_validation_reason = safe_failure_reason
             return signal
+        finally:
+            self._try_write_journal(
+                raw_text=raw_text,
+                signal=signal,
+                plan=plan,
+                result=result,
+                journal_status=journal_status,
+                safe_failure_reason=safe_failure_reason,
+                flow_errors=flow_errors,
+            )
+
+    def _try_write_journal(
+        self,
+        *,
+        raw_text: str,
+        signal: Signal | None,
+        plan: ExecutionPlan | None,
+        result: ExecutionResult | None,
+        journal_status: str,
+        safe_failure_reason: str | None,
+        flow_errors: list[dict[str, str]],
+    ) -> None:
+        if self._journal_service is None:
+            return
+
+        symbol = signal.symbol if signal is not None else "unknown"
+        payload: dict[str, object] = {
+            "journalVersion": 1,
+            "timestamp": _utc_now_iso(),
+            "status": journal_status,
+            "rawText": raw_text,
+            "signal": signal.to_dict() if signal is not None else None,
+            "executionPlan": plan.to_dict() if plan is not None else None,
+            "executionResult": result.to_dict() if result is not None else None,
+            "resultSummary": {
+                "success": result.success if result is not None else False,
+                "successOrFailureReason": (
+                    result.bybit_response_summary.get("successReason")
+                    if result is not None
+                    else safe_failure_reason
+                ),
+            },
+            "relevantIds": {
+                "entryOrderId": (
+                    result.bybit_response_summary.get("orderId") if result is not None else None
+                ),
+                "entryOrderLinkId": (
+                    result.bybit_response_summary.get("orderLinkId") if result is not None else None
+                ),
+                "registeredTakeProfits": (
+                    result.registered_take_profit_orders if result is not None else []
+                ),
+            },
+            "monitor": {
+                "websocketStarted": result.monitor_websocket_started if result is not None else False,
+                "restFallbackUsed": result.monitor_rest_fallback_used if result is not None else False,
+                "finalDecisionSource": (
+                    result.monitor_final_decision_source if result is not None else None
+                ),
+                "finalDecisionReason": (
+                    result.monitor_final_decision_reason if result is not None else safe_failure_reason
+                ),
+            },
+            "cleanup": {
+                "attempted": result.cleanup_attempted if result is not None else False,
+                "status": result.cleanup_status if result is not None else "not_attempted",
+                "remainingRegisteredTpCount": (
+                    result.cleanup_remaining_registered_tp_count if result is not None else 0
+                ),
+            },
+            "errors": flow_errors,
+        }
+
+        try:
+            journal_path = self._journal_service.write(symbol=symbol, journal_payload=payload)
+            LOGGER.info("Journal de execução gravado. path=%s", journal_path)
+        except Exception as exc:  # pragma: no cover - proteção defensiva de callback
+            LOGGER.error("Falha ao gravar journal de execução. reason=%s", exc)
 
 
 async def _run() -> int:
@@ -142,6 +241,7 @@ async def _run() -> int:
         execution_client=bybit_exec_client,
         private_ws_monitor=ws_monitor,
     )
+    journal_service = ExecutionJournalService(base_dir=Path("runtime/journal"))
 
     listener = TelegramSignalListener(
         settings=settings,
@@ -149,10 +249,17 @@ async def _run() -> int:
             router=signal_router,
             planner=execution_planner,
             executor=trade_executor,
+            journal_service=journal_service,
         ),
     )
     await listener.run()
     return 0
+
+
+def _utc_now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
 
 
 def main() -> int:

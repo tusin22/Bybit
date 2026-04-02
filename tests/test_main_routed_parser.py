@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from src.bybit.execution_client import BybitExecutionClientError
 from src.main import RoutedSignalParser
-from src.models.execution_result import ExecutionResult
 from src.models.execution_plan import ExecutionPlan
+from src.models.execution_result import ExecutionResult
 from src.models.signal import Signal
 
 
@@ -61,6 +61,25 @@ class FakeSignalParser:
         )
 
 
+class RecordingJournalService:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def write(self, *, symbol: str, journal_payload: dict[str, object]):
+        self.calls.append({"symbol": symbol, "payload": journal_payload})
+        return "/tmp/runtime/journal/mock.json"
+
+
+class RaisingJournalService:
+    def write(self, *, symbol: str, journal_payload: dict[str, object]):
+        raise OSError("disk full")
+
+
+class ConfirmationFailingExecutor:
+    def execute_entry(self, *, plan: ExecutionPlan):
+        raise BybitExecutionClientError("Falha Bybit em get_order_history: retCode=10006 retMsg=system busy")
+
+
 def test_routed_signal_parser_handles_bybit_rejection_without_raising() -> None:
     parser = RoutedSignalParser(
         router=FakeRouter(),
@@ -74,11 +93,6 @@ def test_routed_signal_parser_handles_bybit_rejection_without_raising() -> None:
     assert isinstance(result, Signal)
     assert result.entry_eligible is False
     assert "callback mantido ativo" in (result.entry_validation_reason or "")
-
-
-class ConfirmationFailingExecutor:
-    def execute_entry(self, *, plan: ExecutionPlan):
-        raise BybitExecutionClientError("Falha Bybit em get_order_history: retCode=10006 retMsg=system busy")
 
 
 def test_routed_signal_parser_keeps_callback_alive_when_confirmation_fails() -> None:
@@ -151,7 +165,7 @@ class StopLossFailingButSafeExecutor:
             blocked_reason=None,
             confirmation_status="confirmed",
             confirmation_reason="orderStatus confirmado via REST",
-            bybit_response_summary={"orderId": "abc-123", "orderLinkId": "entry-btc"},
+            bybit_response_summary={"orderId": "abc-123", "orderLinkId": "entry-btc", "successReason": "ok"},
             stop_loss_response_summary={"requestAccepted": False},
             take_profit_response_summaries=[],
             client_order_context="entry-btc",
@@ -172,3 +186,61 @@ def test_routed_signal_parser_keeps_callback_alive_when_stop_loss_fails() -> Non
     assert isinstance(result, ExecutionResult)
     assert result.order_confirmed is True
     assert result.stop_loss_status == "failed"
+
+
+def test_routed_signal_parser_writes_complete_journal_on_success() -> None:
+    journal = RecordingJournalService()
+    parser = RoutedSignalParser(
+        router=FakeRouter(),
+        planner=FakePlanner(),
+        executor=StopLossFailingButSafeExecutor(),
+        journal_service=journal,
+    )
+    parser._parser = FakeSignalParser()
+
+    result = parser.parse("BTCUSDT LONG")
+
+    assert isinstance(result, ExecutionResult)
+    assert len(journal.calls) == 1
+    payload = journal.calls[0]["payload"]
+    assert payload["status"] == "completed"
+    assert payload["rawText"] == "BTCUSDT LONG"
+    assert payload["executionPlan"] is not None
+    assert payload["executionResult"] is not None
+    assert payload["relevantIds"]["entryOrderId"] == "abc-123"
+
+
+def test_routed_signal_parser_writes_partial_journal_on_safe_failure() -> None:
+    journal = RecordingJournalService()
+    parser = RoutedSignalParser(
+        router=FakeRouter(),
+        planner=FakePlanner(),
+        executor=RejectingExecutor(),
+        journal_service=journal,
+    )
+    parser._parser = FakeSignalParser()
+
+    result = parser.parse("BTCUSDT LONG")
+
+    assert isinstance(result, Signal)
+    assert len(journal.calls) == 1
+    payload = journal.calls[0]["payload"]
+    assert payload["status"] == "safe_failure"
+    assert payload["executionPlan"] is not None
+    assert payload["executionResult"] is None
+    assert payload["errors"][0]["stage"] == "execution"
+
+
+def test_routed_signal_parser_keeps_callback_alive_when_journal_write_fails() -> None:
+    parser = RoutedSignalParser(
+        router=FakeRouter(),
+        planner=FakePlanner(),
+        executor=StopLossFailingButSafeExecutor(),
+        journal_service=RaisingJournalService(),
+    )
+    parser._parser = FakeSignalParser()
+
+    result = parser.parse("BTCUSDT LONG")
+
+    assert isinstance(result, ExecutionResult)
+    assert result.order_confirmed is True
