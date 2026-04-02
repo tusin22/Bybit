@@ -19,6 +19,7 @@ Projeto em Python para processar sinais de trade recebidos via Telegram, com evo
   - bloqueio quando `ENABLE_ORDER_EXECUTION=true` e `BYBIT_TESTNET=false`;
   - bloqueio quando `ExecutionPlan` não for elegível.
 - Log estruturado do resultado da tentativa de execução (`ExecutionResult`).
+- Journal local estruturado por execução/trade em arquivo JSON (auditoria e diagnóstico), sem banco/painel/analytics avançada nesta fase.
 - Em falha de parsing, log de erro claro e continuidade do loop.
 - Proteção pós-confirmação: configuração automática de **stop loss** na posição via `Set Trading Stop`.
 - Take profits parciais pós-confirmação com **4 ordens Limit** separadas em `category=linear`, `positionIdx=0`, `reduceOnly=true` (distribuição configurável por `.env`).
@@ -99,6 +100,8 @@ python -m src.main
 Na primeira execução, o Telethon pode solicitar autenticação da conta para criar a sessão local.
 No startup, o listener valida/resolve `TELEGRAM_SOURCE_CHAT`; se o valor for inválido, o processo encerra com erro de configuração claro (sem traceback como fluxo principal).
 
+Nota: o journal local por execução é salvo automaticamente em `runtime/journal/` para auditoria e diagnóstico; nesta fase ainda não há banco de dados, dashboard ou analytics avançada.
+
 ## Comportamento em runtime
 
 - Nova mensagem chega no chat/canal configurado.
@@ -148,6 +151,8 @@ No startup, o listener valida/resolve `TELEGRAM_SOURCE_CHAT`; se o valor for inv
   - registra os `orderId` / `orderLinkId` dos TPs aceitos na execução atual;
   - quando acionada pelo monitor curto, tenta cancelar apenas os TPs registrados desta execução;
 - sem loop infinito e sem monitor contínuo global nesta fase.
+- O callback também persiste um journal local por execução em `runtime/journal/` (UTF-8 JSON legível), com snapshot de `raw_text`, dados parseados, plano, resultado, IDs relevantes, monitor, cleanup e erros seguros quando existirem.
+
 - Interpretação de `success` no resultado final:
   - `True` apenas quando entrada está confirmada, stop loss (quando tentado) foi configurado e TPs (quando tentados) não tiveram falhas;
   - `False` quando entrada não confirma, stop loss falha ou qualquer TP falha (parcial/total).
