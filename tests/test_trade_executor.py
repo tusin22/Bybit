@@ -167,13 +167,17 @@ class FakePrivateWsMonitor:
         should_fail: bool = False,
         reason: str = "fake",
         has_order_events: bool = False,
+        has_execution_events: bool = False,
         position_decision: str = "inconclusive",
+        execution_stream_subscribed: bool = True,
     ) -> None:
         self.should_close_position = should_close_position
         self.should_fail = should_fail
         self.reason = reason
         self.has_order_events = has_order_events
+        self.has_execution_events = has_execution_events
         self.position_decision = position_decision
+        self.execution_stream_subscribed = execution_stream_subscribed
         self.calls = 0
 
     def run_window(
@@ -194,7 +198,7 @@ class FakePrivateWsMonitor:
 
             raise BybitPrivateWsMonitorError("websocket down")
         from src.bybit.private_execution_ws import PrivateWsWindowResult
-        from src.bybit.private_execution_ws import PrivateWsOrderEvent
+        from src.bybit.private_execution_ws import PrivateWsExecutionEvent, PrivateWsOrderEvent
 
         return PrivateWsWindowResult(
             started=True,
@@ -207,6 +211,23 @@ class FakePrivateWsMonitor:
             matched_order_events=(
                 [PrivateWsOrderEvent(order_id="tp-1", order_link_id="tp1-btcusdt-abc", order_status="Filled")]
                 if self.has_order_events
+                else []
+            ),
+            execution_stream_subscribed=self.execution_stream_subscribed,
+            matched_execution_events=(
+                [
+                    PrivateWsExecutionEvent(
+                        order_id="tp-1",
+                        order_link_id="tp1-btcusdt-abc",
+                        exec_id="exec-1",
+                        exec_qty="0.05",
+                        exec_price="65000",
+                        leaves_qty="0.05",
+                        exec_type="Trade",
+                        closed_size="0",
+                    )
+                ]
+                if self.has_execution_events
                 else []
             ),
             decision_source=("websocket_position" if self.should_close_position else "websocket_position_inconclusive"),
@@ -694,11 +715,44 @@ def test_monitor_uses_private_ws_for_position_close_then_cleanup() -> None:
 
     assert result.monitor_websocket_started is True
     assert result.monitor_websocket_subscribed is True
+    assert result.monitor_websocket_execution_stream_subscribed is True
+    assert result.monitor_websocket_execution_events_relevant_count == 0
+    assert result.monitor_websocket_execution_fill_summary["hasPartialOrTotalFill"] is False
     assert result.monitor_rest_fallback_used is False
     assert result.monitor_final_decision_source == "websocket_position"
     assert result.monitor_final_decision_reason == "position_closed_via_private_ws"
     assert result.cleanup_status == "cancelled_all"
     assert client.position_calls == 0
+
+
+def test_monitor_tracks_execution_events_as_complementary_fill_telemetry() -> None:
+    tp_lookup = {
+        "tp-1": {"orderId": "tp-1", "orderLinkId": "tp1-btcusdt-abc", "orderStatus": "New"},
+    }
+    client = FakeExecutionClient(
+        open_orders_responses=[_order_list_response({"orderId": "abc-123", "orderLinkId": "entry-btc", "orderStatus": "Filled"})],
+        open_order_lookup=tp_lookup,
+    )
+    ws_monitor = FakePrivateWsMonitor(
+        should_close_position=True,
+        has_execution_events=True,
+        reason="position_closed_via_private_ws",
+        position_decision="position_closed",
+    )
+    executor = TradeExecutor(
+        settings=_settings(dry_run=False, enable_order_execution=True),
+        execution_client=client,
+        private_ws_monitor=ws_monitor,
+    )
+
+    result = executor.execute_entry(plan=_eligible_plan())
+
+    assert result.monitor_websocket_execution_stream_subscribed is True
+    assert result.monitor_websocket_execution_events_relevant_count == 1
+    assert result.monitor_websocket_execution_fill_summary["eventsCount"] == 1
+    assert result.monitor_websocket_execution_fill_summary["hasPartialOrTotalFill"] is True
+    assert result.monitor_websocket_execution_fill_summary["totalExecQty"] == "0.05"
+    assert result.monitor_final_decision_source == "websocket_position"
 
 
 def test_monitor_falls_back_to_rest_when_private_ws_fails() -> None:
@@ -745,6 +799,31 @@ def test_monitor_falls_back_to_rest_when_ws_has_only_order_events_without_positi
     assert result.monitor_status == "started_window_expired"
     assert result.monitor_final_decision_source == "rest_position_inconclusive"
     assert result.monitor_final_decision_reason == "rest_window_expired_without_closed_position"
+
+
+def test_monitor_does_not_close_by_execution_only_without_position_confirmation() -> None:
+    client = FakeExecutionClient(
+        open_orders_responses=[_order_list_response({"orderId": "abc-123", "orderLinkId": "entry-btc", "orderStatus": "Filled"})],
+        positions_response={"retCode": 0, "retMsg": "OK", "result": {"list": [{"side": "Buy", "size": "0.1"}]}},
+    )
+    ws_monitor = FakePrivateWsMonitor(
+        should_close_position=False,
+        has_execution_events=True,
+        reason="private_ws_window_expired_without_final_position_event",
+        position_decision="inconclusive",
+    )
+    executor = TradeExecutor(
+        settings=_settings(dry_run=False, enable_order_execution=True),
+        execution_client=client,
+        private_ws_monitor=ws_monitor,
+    )
+
+    result = executor.execute_entry(plan=_eligible_plan())
+
+    assert result.monitor_websocket_execution_events_relevant_count == 1
+    assert result.monitor_websocket_execution_fill_summary["hasPartialOrTotalFill"] is True
+    assert result.monitor_position_closed_within_window is False
+    assert result.monitor_final_decision_source == "rest_position_inconclusive"
 
 
 def test_monitor_handles_partial_position_query_failure_safely() -> None:

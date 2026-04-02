@@ -80,6 +80,9 @@ class ExecutionResult:
     monitor_websocket_connected: bool
     monitor_websocket_authenticated: bool
     monitor_websocket_subscribed: bool
+    monitor_websocket_execution_stream_subscribed: bool
+    monitor_websocket_execution_events_relevant_count: int
+    monitor_websocket_execution_fill_summary: dict[str, object]
     monitor_rest_fallback_used: bool
     monitor_attempts: int
     monitor_position_closed_within_window: bool

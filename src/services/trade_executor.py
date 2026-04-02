@@ -17,6 +17,7 @@ from src.bybit.execution_client import (
 from src.bybit.private_execution_ws import (
     BybitPrivateExecutionWsMonitor,
     BybitPrivateWsMonitorError,
+    PrivateWsExecutionEvent,
 )
 from src.config import Settings
 from src.models.execution_plan import ExecutionPlan
@@ -95,6 +96,9 @@ class _ExecutionMonitorResult:
     websocket_connected: bool
     websocket_authenticated: bool
     websocket_subscribed: bool
+    websocket_execution_stream_subscribed: bool
+    websocket_execution_events_relevant_count: int
+    websocket_execution_fill_summary: dict[str, object]
     rest_fallback_used: bool
     attempts: int
     position_closed_within_window: bool
@@ -418,6 +422,9 @@ class TradeExecutor:
             websocket_connected=False,
             websocket_authenticated=False,
             websocket_subscribed=False,
+            websocket_execution_stream_subscribed=False,
+            websocket_execution_events_relevant_count=0,
+            websocket_execution_fill_summary={},
             rest_fallback_used=False,
             attempts=0,
             position_closed_within_window=False,
@@ -500,6 +507,9 @@ class TradeExecutor:
             monitor_websocket_connected=execution_monitor.websocket_connected,
             monitor_websocket_authenticated=execution_monitor.websocket_authenticated,
             monitor_websocket_subscribed=execution_monitor.websocket_subscribed,
+            monitor_websocket_execution_stream_subscribed=execution_monitor.websocket_execution_stream_subscribed,
+            monitor_websocket_execution_events_relevant_count=execution_monitor.websocket_execution_events_relevant_count,
+            monitor_websocket_execution_fill_summary=execution_monitor.websocket_execution_fill_summary,
             monitor_rest_fallback_used=execution_monitor.rest_fallback_used,
             monitor_attempts=execution_monitor.attempts,
             monitor_position_closed_within_window=execution_monitor.position_closed_within_window,
@@ -535,6 +545,9 @@ class TradeExecutor:
         ws_connected = False
         ws_authenticated = False
         ws_subscribed = False
+        ws_execution_stream_subscribed = False
+        ws_execution_events_relevant_count = 0
+        ws_execution_fill_summary: dict[str, object] = {}
         rest_fallback_used = False
 
         if self._private_ws_monitor is not None:
@@ -561,18 +574,24 @@ class TradeExecutor:
                 ws_connected = ws_result.connected
                 ws_authenticated = ws_result.authenticated
                 ws_subscribed = ws_result.subscribed
+                ws_execution_stream_subscribed = ws_result.execution_stream_subscribed
+                ws_execution_events_relevant_count = len(ws_result.matched_execution_events)
+                ws_execution_fill_summary = _build_execution_fill_summary(ws_result.matched_execution_events)
                 LOGGER.info(
-                    "Monitor websocket privado finalizado. symbol=%s category=%s side=%s connected=%s authenticated=%s subscribed=%s events_received=%s reason=%s position_closed=%s order_complementary_events=%s position_decision=%s",
+                    "Monitor websocket privado finalizado. symbol=%s category=%s side=%s connected=%s authenticated=%s subscribed=%s execution_subscribed=%s events_received=%s reason=%s position_closed=%s order_complementary_events=%s execution_relevant_events=%s execution_partial_or_total_fill=%s position_decision=%s",
                     symbol,
                     category,
                     side,
                     ws_result.connected,
                     ws_result.authenticated,
                     ws_result.subscribed,
+                    ws_result.execution_stream_subscribed,
                     ws_result.events_received,
                     ws_result.reason,
                     ws_result.position_closed_confirmed,
                     len(ws_result.matched_order_events),
+                    len(ws_result.matched_execution_events),
+                    ws_execution_fill_summary.get("hasPartialOrTotalFill", False),
                     ws_result.position_decision,
                 )
                 if ws_result.position_closed_confirmed:
@@ -588,6 +607,9 @@ class TradeExecutor:
                         websocket_connected=ws_connected,
                         websocket_authenticated=ws_authenticated,
                         websocket_subscribed=ws_subscribed,
+                        websocket_execution_stream_subscribed=ws_execution_stream_subscribed,
+                        websocket_execution_events_relevant_count=ws_execution_events_relevant_count,
+                        websocket_execution_fill_summary=ws_execution_fill_summary,
                         rest_fallback_used=False,
                         final_decision_source=ws_result.decision_source,
                         final_decision_reason=ws_result.reason,
@@ -636,6 +658,9 @@ class TradeExecutor:
                     websocket_connected=ws_connected,
                     websocket_authenticated=ws_authenticated,
                     websocket_subscribed=ws_subscribed,
+                    websocket_execution_stream_subscribed=ws_execution_stream_subscribed,
+                    websocket_execution_events_relevant_count=ws_execution_events_relevant_count,
+                    websocket_execution_fill_summary=ws_execution_fill_summary,
                     rest_fallback_used=rest_fallback_used,
                     attempts=attempts_used,
                     position_closed_within_window=False,
@@ -669,6 +694,9 @@ class TradeExecutor:
                 websocket_connected=ws_connected,
                 websocket_authenticated=ws_authenticated,
                 websocket_subscribed=ws_subscribed,
+                websocket_execution_stream_subscribed=ws_execution_stream_subscribed,
+                websocket_execution_events_relevant_count=ws_execution_events_relevant_count,
+                websocket_execution_fill_summary=ws_execution_fill_summary,
                 rest_fallback_used=rest_fallback_used,
                 attempts=attempts_used,
                 position_closed_within_window=False,
@@ -697,6 +725,9 @@ class TradeExecutor:
             websocket_connected=ws_connected,
             websocket_authenticated=ws_authenticated,
             websocket_subscribed=ws_subscribed,
+            websocket_execution_stream_subscribed=ws_execution_stream_subscribed,
+            websocket_execution_events_relevant_count=ws_execution_events_relevant_count,
+            websocket_execution_fill_summary=ws_execution_fill_summary,
             rest_fallback_used=rest_fallback_used,
             final_decision_source="rest_position",
             final_decision_reason="position_closed_via_rest",
@@ -716,6 +747,9 @@ class TradeExecutor:
         websocket_connected: bool,
         websocket_authenticated: bool,
         websocket_subscribed: bool,
+        websocket_execution_stream_subscribed: bool,
+        websocket_execution_events_relevant_count: int,
+        websocket_execution_fill_summary: dict[str, object],
         rest_fallback_used: bool,
         final_decision_source: str | None,
         final_decision_reason: str | None,
@@ -744,6 +778,9 @@ class TradeExecutor:
                 websocket_connected=websocket_connected,
                 websocket_authenticated=websocket_authenticated,
                 websocket_subscribed=websocket_subscribed,
+                websocket_execution_stream_subscribed=websocket_execution_stream_subscribed,
+                websocket_execution_events_relevant_count=websocket_execution_events_relevant_count,
+                websocket_execution_fill_summary=websocket_execution_fill_summary,
                 rest_fallback_used=rest_fallback_used,
                 attempts=attempts_used,
                 position_closed_within_window=True,
@@ -793,6 +830,9 @@ class TradeExecutor:
             websocket_connected=websocket_connected,
             websocket_authenticated=websocket_authenticated,
             websocket_subscribed=websocket_subscribed,
+            websocket_execution_stream_subscribed=websocket_execution_stream_subscribed,
+            websocket_execution_events_relevant_count=websocket_execution_events_relevant_count,
+            websocket_execution_fill_summary=websocket_execution_fill_summary,
             rest_fallback_used=rest_fallback_used,
             attempts=attempts_used,
             position_closed_within_window=True,
@@ -1157,6 +1197,9 @@ class TradeExecutor:
             monitor_websocket_connected=False,
             monitor_websocket_authenticated=False,
             monitor_websocket_subscribed=False,
+            monitor_websocket_execution_stream_subscribed=False,
+            monitor_websocket_execution_events_relevant_count=0,
+            monitor_websocket_execution_fill_summary={},
             monitor_rest_fallback_used=False,
             monitor_attempts=0,
             monitor_position_closed_within_window=False,
@@ -1266,6 +1309,32 @@ def _collect_registered_tp_orders(tp_summaries: list[dict[str, object]]) -> list
             }
         )
     return registered
+
+
+def _build_execution_fill_summary(events: list[PrivateWsExecutionEvent]) -> dict[str, object]:
+    total_exec_qty = Decimal("0")
+    has_partial_or_total_fill = False
+    exec_types: set[str] = set()
+
+    for event in events:
+        if event.exec_type:
+            exec_types.add(event.exec_type)
+        if event.exec_qty is None:
+            continue
+        try:
+            qty = Decimal(event.exec_qty)
+        except (InvalidOperation, ValueError):
+            continue
+        if qty > 0:
+            has_partial_or_total_fill = True
+            total_exec_qty += qty
+
+    return {
+        "eventsCount": len(events),
+        "hasPartialOrTotalFill": has_partial_or_total_fill,
+        "totalExecQty": format(total_exec_qty.normalize(), "f") if total_exec_qty != 0 else "0",
+        "execTypes": sorted(exec_types),
+    }
 
 
 def _resolve_tp_status(

@@ -21,6 +21,18 @@ class PrivateWsOrderEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class PrivateWsExecutionEvent:
+    order_id: str | None
+    order_link_id: str | None
+    exec_id: str | None
+    exec_qty: str | None
+    exec_price: str | None
+    leaves_qty: str | None
+    exec_type: str | None
+    closed_size: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class PrivateWsWindowResult:
     started: bool
     connected: bool
@@ -30,6 +42,8 @@ class PrivateWsWindowResult:
     position_closed_confirmed: bool
     reason: str | None
     matched_order_events: list[PrivateWsOrderEvent]
+    execution_stream_subscribed: bool
+    matched_execution_events: list[PrivateWsExecutionEvent]
     decision_source: str
     position_decision: str
 
@@ -57,6 +71,7 @@ class BybitPrivateExecutionWsMonitor:
         entry_order_id: str | None,
         entry_order_link_id: str | None,
         registered_tp_orders: list[dict[str, object]],
+        enable_execution_stream: bool = True,
         max_attempts: int,
         interval_seconds: float,
     ) -> PrivateWsWindowResult:
@@ -93,12 +108,14 @@ class BybitPrivateExecutionWsMonitor:
         side_for_position = side
         events_received = 0
         matched_order_events: list[PrivateWsOrderEvent] = []
+        matched_execution_events: list[PrivateWsExecutionEvent] = []
         position_decision = "inconclusive"
         condition = threading.Condition()
 
         connected = False
         authenticated = False
         subscribed = False
+        execution_stream_subscribed = False
 
         def _on_order(message: dict[str, object]) -> None:
             nonlocal events_received
@@ -160,6 +177,41 @@ class BybitPrivateExecutionWsMonitor:
                     position_decision = _resolve_position_decision_from_size(size_decimal)
                 condition.notify_all()
 
+        def _on_execution(message: dict[str, object]) -> None:
+            nonlocal events_received
+            payloads = message.get("data")
+            if not isinstance(payloads, list):
+                return
+
+            with condition:
+                for item in payloads:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("category") != category:
+                        continue
+                    if item.get("symbol") != symbol:
+                        continue
+
+                    order_id = _as_optional_string(item.get("orderId"))
+                    order_link_id = _as_optional_string(item.get("orderLinkId"))
+                    if order_id not in tracked_ids and order_link_id not in tracked_ids:
+                        continue
+
+                    matched_execution_events.append(
+                        PrivateWsExecutionEvent(
+                            order_id=order_id,
+                            order_link_id=order_link_id,
+                            exec_id=_as_optional_string(item.get("execId")),
+                            exec_qty=_as_optional_string(item.get("execQty")),
+                            exec_price=_as_optional_string(item.get("execPrice")),
+                            leaves_qty=_as_optional_string(item.get("leavesQty")),
+                            exec_type=_as_optional_string(item.get("execType")),
+                            closed_size=_as_optional_string(item.get("closedSize")),
+                        )
+                    )
+                    events_received += 1
+                condition.notify_all()
+
         try:
             ws = WebSocket(
                 testnet=self._testnet,
@@ -172,6 +224,9 @@ class BybitPrivateExecutionWsMonitor:
 
             ws.order_stream(callback=_on_order)
             ws.position_stream(callback=_on_position)
+            if enable_execution_stream:
+                ws.execution_stream(callback=_on_execution)
+                execution_stream_subscribed = True
             subscribed = True
 
             timeout_seconds = max_attempts * interval_seconds
@@ -188,6 +243,8 @@ class BybitPrivateExecutionWsMonitor:
                         position_closed_confirmed=True,
                         reason="position_closed_via_private_ws",
                         matched_order_events=matched_order_events,
+                        execution_stream_subscribed=execution_stream_subscribed,
+                        matched_execution_events=matched_execution_events,
                         decision_source="websocket_position",
                         position_decision=position_decision,
                     )
@@ -202,6 +259,8 @@ class BybitPrivateExecutionWsMonitor:
                         position_closed_confirmed=False,
                         reason="private_ws_order_only_without_position_confirmation",
                         matched_order_events=matched_order_events,
+                        execution_stream_subscribed=execution_stream_subscribed,
+                        matched_execution_events=matched_execution_events,
                         decision_source="websocket_order_complementary_only",
                         position_decision=position_decision,
                     )
@@ -222,6 +281,8 @@ class BybitPrivateExecutionWsMonitor:
                 position_closed_confirmed=False,
                 reason="private_ws_window_expired_without_final_position_event",
                 matched_order_events=matched_order_events,
+                execution_stream_subscribed=execution_stream_subscribed,
+                matched_execution_events=matched_execution_events,
                 decision_source="websocket_position_inconclusive",
                 position_decision=position_decision,
             )

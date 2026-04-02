@@ -24,8 +24,8 @@ Projeto em Python para processar sinais de trade recebidos via Telegram, com evo
 - Take profits parciais pós-confirmação com **4 ordens Limit** separadas em `category=linear`, `positionIdx=0`, `reduceOnly=true` (distribuição configurável por `.env`).
 - Limpeza incremental de ordens penduradas com foco nos IDs de TP da execução atual (REST curto e controlado, sem monitor contínuo).
 - Monitor curto da execução atual após entrada+proteções para acompanhar fechamento da posição e concluir cleanup com janela limitada.
-- Monitor curto preferencial via **websocket privado Bybit V5** (`order` e `position`) restrito à execução atual, com fallback REST seguro.
-- No monitor websocket-first desta fase, `position` é a fonte de verdade para fechamento final; `order` é apenas complementar para telemetria/rastreio da execução atual.
+- Monitor curto preferencial via **websocket privado Bybit V5** (`position`, `order` e assinatura opcional de `execution`) restrito à execução atual, com fallback REST seguro.
+- No monitor websocket-first desta fase, `position` é a fonte de verdade para fechamento final; `order` e `execution` são complementares para telemetria/rastreio de ordens e fills da execução atual.
 - **Sem trailing stop nesta fase**.
 - **Sem monitor contínuo global de posição nesta fase**.
 - Confirmação pós-ACK implementada com polling REST curto e controlado (sem websocket).
@@ -137,8 +137,9 @@ No startup, o listener valida/resolve `TELEGRAM_SOURCE_CHAT`; se o valor for inv
   - status da limpeza pós-fechamento de posição (tentativa, quantidade encontrada/cancelada/falha e razões).
 - Após confirmação e configuração de proteção, há um monitor curto da execução atual:
   - usa os IDs da entrada e dos TPs aceitos desta execução;
-  - tenta confirmar fechamento via websocket privado (`order` e `position`) para a execução atual;
-  - considera fechamento final apenas quando `position` confirmar (fonte de verdade); evento `order` isolado não encerra posição;
+  - tenta confirmar fechamento via websocket privado (`position`) com `order` e `execution` como apoio complementar na execução atual;
+  - considera fechamento final apenas quando `position` confirmar (fonte de verdade); eventos isolados de `order` ou `execution` não encerram posição;
+  - quando `execution` chega para IDs rastreados da execução atual, enriquece telemetria de fills parciais/totais sem alterar a regra principal;
   - se websocket ficar inconclusivo para `position` (mesmo com `order` relevante), aciona fallback REST cedo e explícito (`Get Position Info`, `Get Open & Closed Orders`, `Get Order History`);
   - se detectar posição fechada dentro da janela, aciona cleanup para cancelar apenas TPs remanescentes desta execução;
   - registra tentativas, status final do monitor e ordens remanescentes no `ExecutionResult`;
