@@ -159,6 +159,28 @@ Nota: o journal local por execução é salvo automaticamente em `runtime/journa
   - `True` apenas quando entrada está confirmada, stop loss (quando tentado) foi configurado e TPs (quando tentados) não tiveram falhas;
   - `False` quando entrada não confirma, stop loss falha ou qualquer TP falha (parcial/total).
 
+
+## Resumo local de journals (CLI)
+
+Para inspeção operacional rápida dos journals JSON já gravados (sem dashboard, sem banco e sem analytics avançada), use:
+
+```bash
+python -m src.scripts.journal_summary
+```
+
+Opções simples:
+
+- `--path`: diretório dos journals (padrão: `runtime/journal`)
+- `--last`: quantidade de registros recentes na listagem curta (padrão: `10`)
+
+Exemplo:
+
+```bash
+python -m src.scripts.journal_summary --path runtime/journal --last 15
+```
+
+A saída mostra agregados por `tradeStatus`, totais de `success=true/false`, contadores operacionais principais (monitor inconclusivo, fechamento limpo/com falhas, blocked e safe_failure) e uma lista curta dos journals mais recentes.
+
 ## Rodar testes
 
 ```bash
