@@ -13,7 +13,7 @@ from src.bybit import (
 from src.bybit.private_execution_ws import BybitPrivateExecutionWsMonitor
 from src.config import load_settings
 from src.models.execution_plan import ExecutionPlan
-from src.models.execution_result import ExecutionResult
+from src.models.execution_result import ExecutionResult, TradeStatus
 from src.models.signal import Signal
 from src.parsing.vectra_parser import VectraSignalParser
 from src.services.execution_journal import ExecutionJournalService
@@ -148,58 +148,151 @@ class RoutedSignalParser:
             return
 
         symbol = signal.symbol if signal is not None else "unknown"
+        summary = _build_journal_summary(
+            signal=signal,
+            result=result,
+            journal_status=journal_status,
+            safe_failure_reason=safe_failure_reason,
+        )
         payload: dict[str, object] = {
-            "journalVersion": 1,
-            "timestamp": _utc_now_iso(),
+            "journalVersion": 2,
+            "recordedAt": _utc_now_iso(),
             "status": journal_status,
+            "tradeStatus": summary["tradeStatus"],
             "rawText": raw_text,
             "signal": signal.to_dict() if signal is not None else None,
-            "executionPlan": plan.to_dict() if plan is not None else None,
-            "executionResult": result.to_dict() if result is not None else None,
-            "resultSummary": {
-                "success": result.success if result is not None else False,
-                "successOrFailureReason": (
-                    result.bybit_response_summary.get("successReason")
-                    if result is not None
-                    else safe_failure_reason
-                ),
-            },
-            "relevantIds": {
-                "entryOrderId": (
-                    result.bybit_response_summary.get("orderId") if result is not None else None
-                ),
-                "entryOrderLinkId": (
-                    result.bybit_response_summary.get("orderLinkId") if result is not None else None
-                ),
-                "registeredTakeProfits": (
-                    result.registered_take_profit_orders if result is not None else []
-                ),
+            "plan": plan.to_dict() if plan is not None else None,
+            "execution": {
+                "result": result.to_dict() if result is not None else None,
+                "ids": {
+                    "entryOrderId": summary["entryOrderId"],
+                    "entryOrderLinkId": summary["entryOrderLinkId"],
+                    "registeredTakeProfits": (
+                        result.registered_take_profit_orders if result is not None else []
+                    ),
+                },
             },
             "monitor": {
+                "status": summary["monitorStatus"],
                 "websocketStarted": result.monitor_websocket_started if result is not None else False,
                 "restFallbackUsed": result.monitor_rest_fallback_used if result is not None else False,
-                "finalDecisionSource": (
-                    result.monitor_final_decision_source if result is not None else None
-                ),
+                "finalDecisionSource": summary["finalDecisionSource"],
                 "finalDecisionReason": (
                     result.monitor_final_decision_reason if result is not None else safe_failure_reason
                 ),
             },
             "cleanup": {
                 "attempted": result.cleanup_attempted if result is not None else False,
-                "status": result.cleanup_status if result is not None else "not_attempted",
+                "status": summary["cleanupStatus"],
                 "remainingRegisteredTpCount": (
                     result.cleanup_remaining_registered_tp_count if result is not None else 0
                 ),
             },
             "errors": flow_errors,
+            "summary": summary,
         }
 
         try:
             journal_path = self._journal_service.write(symbol=symbol, journal_payload=payload)
-            LOGGER.info("Journal de execução gravado. path=%s", journal_path)
+            LOGGER.info(
+                "Journal de execução gravado. path=%s trade_status=%s",
+                journal_path,
+                summary["tradeStatus"],
+            )
         except Exception as exc:  # pragma: no cover - proteção defensiva de callback
             LOGGER.error("Falha ao gravar journal de execução. reason=%s", exc)
+
+
+def _build_journal_summary(
+    *,
+    signal: Signal | None,
+    result: ExecutionResult | None,
+    journal_status: str,
+    safe_failure_reason: str | None,
+) -> dict[str, object]:
+    trade_status = _resolve_trade_status(
+        result=result,
+        journal_status=journal_status,
+        signal=signal,
+    )
+
+    if result is not None:
+        success_or_failure_reason = (
+            result.bybit_response_summary.get("successReason")
+            or result.monitor_final_decision_reason
+            or result.confirmation_reason
+            or result.stop_loss_reason
+            or result.blocked_reason
+            or "Sem motivo detalhado informado pelo executor."
+        )
+    else:
+        success_or_failure_reason = safe_failure_reason or "Fluxo encerrado sem ExecutionResult."
+
+    return {
+        "tradeStatus": trade_status,
+        "success": result.success if result is not None else False,
+        "successOrFailureReason": success_or_failure_reason,
+        "symbol": signal.symbol if signal is not None else None,
+        "side": signal.side if signal is not None else None,
+        "entryOrderId": result.bybit_response_summary.get("orderId") if result is not None else None,
+        "entryOrderLinkId": (
+            result.bybit_response_summary.get("orderLinkId") if result is not None else None
+        ),
+        "finalDecisionSource": (
+            result.monitor_final_decision_source if result is not None else None
+        ),
+        "cleanupStatus": result.cleanup_status if result is not None else "not_attempted",
+        "monitorStatus": result.monitor_status if result is not None else "not_started",
+    }
+
+
+def _resolve_trade_status(
+    *,
+    result: ExecutionResult | None,
+    journal_status: str,
+    signal: Signal | None,
+) -> TradeStatus:
+    """Normaliza o resultado final em um conjunto pequeno e previsível para auditoria.
+
+    Regras conservadoras:
+    - `safe_failure`: exceções tratadas no fluxo principal (validação/execução), sem ExecutionResult final.
+    - `blocked`: execução sem envio de ordem (`order_sent=False`) ou sinal explicitamente não elegível sem resultado.
+    - `entry_sent`: ACK de envio sem confirmação final.
+    - `entry_confirmed`: confirmação de entrada sem proteção completa/fechamento.
+    - `protected`: entrada confirmada com SL configurado e TPs integralmente aceitos.
+    - `monitoring_inconclusive`: monitor iniciado, mas sem conclusão confiável da janela.
+    - `closed_clean`: posição fechada na janela e cleanup concluído sem falhas.
+    - `closed_with_failures`: posição fechada, porém cleanup parcial/falho ou sucesso global falso.
+    """
+    if journal_status == "safe_failure":
+        return "safe_failure"
+
+    if result is None:
+        if signal is not None and signal.entry_eligible is False:
+            return "blocked"
+        return "safe_failure"
+
+    if not result.order_sent:
+        return "blocked"
+
+    if result.order_sent and not result.order_confirmed:
+        return "entry_sent"
+
+    if result.monitor_position_closed_within_window:
+        if result.success and result.cleanup_status in {"cancelled_all", "not_needed"}:
+            return "closed_clean"
+        return "closed_with_failures"
+
+    if result.monitor_started and result.monitor_status in {
+        "started_window_expired",
+        "started_failed_with_safe_fallback",
+    }:
+        return "monitoring_inconclusive"
+
+    if result.stop_loss_status == "configured" and result.take_profit_status == "all_configured":
+        return "protected"
+
+    return "entry_confirmed"
 
 
 async def _run() -> int:

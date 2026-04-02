@@ -20,6 +20,7 @@ Projeto em Python para processar sinais de trade recebidos via Telegram, com evo
   - bloqueio quando `ExecutionPlan` não for elegível.
 - Log estruturado do resultado da tentativa de execução (`ExecutionResult`).
 - Journal local estruturado por execução/trade em arquivo JSON (auditoria e diagnóstico), sem banco/painel/analytics avançada nesta fase.
+- Journal local estruturado por execução/trade em arquivo JSON com schema padronizado por blocos (`signal`, `plan`, `execution`, `monitor`, `cleanup`, `errors`, `summary`) e `tradeStatus` final normalizado para auditoria/debug.
 - Em falha de parsing, log de erro claro e continuidade do loop.
 - Proteção pós-confirmação: configuração automática de **stop loss** na posição via `Set Trading Stop`.
 - Take profits parciais pós-confirmação com **4 ordens Limit** separadas em `category=linear`, `positionIdx=0`, `reduceOnly=true` (distribuição configurável por `.env`).
@@ -151,7 +152,8 @@ Nota: o journal local por execução é salvo automaticamente em `runtime/journa
   - registra os `orderId` / `orderLinkId` dos TPs aceitos na execução atual;
   - quando acionada pelo monitor curto, tenta cancelar apenas os TPs registrados desta execução;
 - sem loop infinito e sem monitor contínuo global nesta fase.
-- O callback também persiste um journal local por execução em `runtime/journal/` (UTF-8 JSON legível), com snapshot de `raw_text`, dados parseados, plano, resultado, IDs relevantes, monitor, cleanup e erros seguros quando existirem.
+- O callback também persiste um journal local por execução em `runtime/journal/` (UTF-8 JSON legível), com schema estável por blocos e resumo final (`summary`) para leitura rápida.
+- `tradeStatus` normaliza o estado final em valores previsíveis (ex.: `blocked`, `safe_failure`, `entry_sent`, `entry_confirmed`, `protected`, `monitoring_inconclusive`, `closed_clean`, `closed_with_failures`) para facilitar auditoria e consumo posterior sem analytics avançada.
 
 - Interpretação de `success` no resultado final:
   - `True` apenas quando entrada está confirmada, stop loss (quando tentado) foi configurado e TPs (quando tentados) não tiveram falhas;
