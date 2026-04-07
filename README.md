@@ -199,15 +199,30 @@ python -m src.scripts.journal_summary --path runtime/journal --last 15
 A saída mostra agregados por `tradeStatus`, totais de `success=true/false`, contadores operacionais principais (monitor inconclusivo, fechamento limpo/com falhas, blocked e safe_failure) e uma lista curta dos journals mais recentes.
 
 
-## Dashboard local (somente leitura)
+## Dashboard local (painel de controle local)
 
-Para observabilidade do modo `auto_analysis` com dados locais já gerados em `runtime/state/` e `runtime/journal/`:
+Para usar o dashboard local com observabilidade + controle/configuração local:
 
 ```bash
 streamlit run src/dashboard/app.py
 ```
 
-O dashboard é somente leitura: não envia ordens, não altera config e não depende de banco.
+Nesta etapa, o dashboard agora inclui:
+
+- botões **Play/Stop** para estado desejado local;
+- indicador visual de estado desejado;
+- formulário de configuração básica do runtime;
+- persistência local em JSON:
+  - `runtime/control/control_state.json`
+  - `runtime/control/runtime_config.json`
+
+Importante: o backend continua responsável por análise de sinais e execução.
+Nesta etapa, o backend **ainda não consome hot-reload** dessas configurações em runtime.
+
+Próximos passos planejados:
+
+- backend obedecer `desiredRunState` (`running`/`stopped`);
+- backend consumir `runtime_config.json` de forma segura e controlada.
 
 ## Rodar testes
 
