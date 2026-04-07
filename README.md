@@ -39,6 +39,7 @@ Projeto em Python para processar sinais de trade recebidos via Telegram, com evo
 - `python-dotenv`
 - `telethon`
 - `pybit`
+- `streamlit` (dashboard local opcional)
 
 ## Instalação
 
@@ -101,7 +102,7 @@ python -m src.main
 Na primeira execução, o Telethon pode solicitar autenticação da conta para criar a sessão local.
 No startup, o listener valida/resolve `TELEGRAM_SOURCE_CHAT`; se o valor for inválido, o processo encerra com erro de configuração claro (sem traceback como fluxo principal).
 
-Nota: o journal local por execução é salvo automaticamente em `runtime/journal/` para auditoria e diagnóstico; nesta fase ainda não há banco de dados, dashboard ou analytics avançada.
+Nota: o journal local por execução é salvo automaticamente em `runtime/journal/` para auditoria e diagnóstico; não há banco de dados nesta fase.
 
 
 ## Modos de sinal
@@ -196,6 +197,17 @@ python -m src.scripts.journal_summary --path runtime/journal --last 15
 ```
 
 A saída mostra agregados por `tradeStatus`, totais de `success=true/false`, contadores operacionais principais (monitor inconclusivo, fechamento limpo/com falhas, blocked e safe_failure) e uma lista curta dos journals mais recentes.
+
+
+## Dashboard local (somente leitura)
+
+Para observabilidade do modo `auto_analysis` com dados locais já gerados em `runtime/state/` e `runtime/journal/`:
+
+```bash
+streamlit run src/dashboard/app.py
+```
+
+O dashboard é somente leitura: não envia ordens, não altera config e não depende de banco.
 
 ## Rodar testes
 
