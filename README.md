@@ -217,12 +217,38 @@ Nesta etapa, o dashboard agora inclui:
   - `runtime/control/runtime_config.json`
 
 Importante: o backend continua responsável por análise de sinais e execução.
-Nesta etapa, o backend **ainda não consome hot-reload** dessas configurações em runtime.
+Nesta etapa, o backend em `auto_analysis` **consome hot-reload** dessas configurações em runtime.
 
-Próximos passos planejados:
+Precedência aplicada no backend (`auto_analysis`):
 
-- backend obedecer `desiredRunState` (`running`/`stopped`);
-- backend consumir `runtime_config.json` de forma segura e controlada.
+- `.env` continua como bootstrap/fallback inicial;
+- `runtime/control/runtime_config.json` (quando válido) sobrescreve parâmetros equivalentes em runtime;
+- `runtime/control/control_state.json` governa apenas estado operacional desejado (`running`/`stopped`).
+- se `control_state.json` não existir/estiver inválido, o backend fica em `stopped` por padrão seguro local.
+
+Play/Stop real:
+
+- `desiredRunState=stopped`: backend mantém loop/feed leve, mas não gera análise de sinal nem execução de ordens;
+- `signalSource != auto_analysis`: backend fica parado (sem análise/execução) mesmo com `desiredRunState=running`;
+- `autoAnalysisEnabled=false`: backend fica parado (sem análise/execução) mesmo com `desiredRunState=running`;
+- `desiredRunState=running`: backend retoma análise/execução normalmente.
+
+Hot-reload seguro:
+
+- recarregamento periódico sem restart do processo;
+- JSON inválido/corrompido não derruba processo, mantém última configuração válida e registra aviso;
+- credenciais/segredos de API **não** entram em hot-reload;
+- mudança de `symbol`/`interval` causa refresh simples e auditável do feed local.
+
+Estado operacional (`runtime/state/auto_analysis_state.json`) inclui campos de controle:
+
+- `desiredRunState`
+- `effectiveRunState`
+- `configSource`
+- `configUpdatedAt`
+- `lastConfigReloadAt`
+- `lastConfigReloadStatus`
+- `stopReason`
 
 ## Rodar testes
 

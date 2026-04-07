@@ -30,6 +30,13 @@ class AutoAnalysisState:
     lastExecutionTradeStatus: str | None
     cooldownUntilCandle: int | None
     openPositionDetected: bool
+    desiredRunState: str
+    effectiveRunState: str
+    configSource: str
+    configUpdatedAt: str | None
+    lastConfigReloadAt: str | None
+    lastConfigReloadStatus: str
+    stopReason: str | None
     updatedAt: str
 
 

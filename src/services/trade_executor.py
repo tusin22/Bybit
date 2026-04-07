@@ -1221,6 +1221,13 @@ class TradeExecutor:
             success=False,
         )
 
+    def set_runtime_flags(self, *, dry_run: bool, enable_order_execution: bool) -> None:
+        self._flags = _ExecutionFlags(
+            dry_run=dry_run,
+            enable_order_execution=enable_order_execution,
+            bybit_testnet=self._flags.bybit_testnet,
+        )
+
 
 def _format_qty(quantity: float, *, qty_step: str | None) -> str:
     decimal_quantity = Decimal(str(quantity))
