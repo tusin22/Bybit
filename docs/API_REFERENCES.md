@@ -17,3 +17,6 @@ Fontes oficiais obrigatórias para integrações deste projeto.
 - Repositório oficial: https://github.com/bybit-exchange/pybit
 - Cliente Unified Trading (`HTTP`): https://github.com/bybit-exchange/pybit/blob/master/pybit/unified_trading.py
 - Implementação de trade V5 (`place_order`): https://github.com/bybit-exchange/pybit/blob/master/pybit/_v5_trade.py
+- Get Kline (V5): https://bybit-exchange.github.io/docs/v5/market/kline
+- Public WebSocket Kline (V5): https://bybit-exchange.github.io/docs/v5/websocket/public/kline
+- Cliente Unified Trading (`WebSocket`): https://github.com/bybit-exchange/pybit/blob/master/pybit/unified_trading.py
