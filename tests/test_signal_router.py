@@ -81,3 +81,14 @@ def test_signal_router_marks_signal_as_not_eligible_for_late_entry() -> None:
     assert enriched.entry_eligible is False
     assert "fora da faixa" in (enriched.entry_validation_reason or "")
     assert enriched.operational_intent == "open_short"
+
+
+def test_signal_router_preserves_auto_analysis_origin() -> None:
+    fake_client = FakeBybitClient(price=103.0)
+    router = SignalRouter(bybit_client=fake_client)
+    signal = _build_signal(side="LONG")
+    signal.origin = "auto_analysis"
+
+    enriched = router.enrich_with_bybit_validation(signal)
+
+    assert enriched.origin == "auto_analysis"

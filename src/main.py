@@ -11,7 +11,7 @@ from src.bybit import (
     BybitReadOnlyClient,
 )
 from src.bybit.private_execution_ws import BybitPrivateExecutionWsMonitor
-from src.config import load_settings
+from src.config import load_settings, validate_settings_for_signal_source
 from src.models.execution_plan import ExecutionPlan
 from src.models.execution_result import ExecutionResult, TradeStatus
 from src.models.signal import Signal
@@ -297,6 +297,7 @@ def _resolve_trade_status(
 
 async def _run() -> int:
     settings = load_settings()
+    validate_settings_for_signal_source(settings)
     configure_logging(settings.log_level)
 
     bybit_read_client = BybitReadOnlyClient(

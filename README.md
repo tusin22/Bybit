@@ -103,6 +103,22 @@ No startup, o listener valida/resolve `TELEGRAM_SOURCE_CHAT`; se o valor for inv
 
 Nota: o journal local por execução é salvo automaticamente em `runtime/journal/` para auditoria e diagnóstico; nesta fase ainda não há banco de dados, dashboard ou analytics avançada.
 
+
+## Modos de sinal
+
+- **telegram** (padrão): fluxo atual com Telethon em `python -m src.main`.
+- **auto_analysis**: geração interna de sinal para `BTCUSDT`/`linear` em candle fechado da Bybit (`bootstrap` REST + atualização por websocket público de kline) em `python -m src.main_auto`.
+
+Variáveis novas relevantes:
+- `SIGNAL_SOURCE=telegram|auto_analysis`
+- `AUTO_ANALYSIS_ENABLED`
+- `AUTO_ANALYSIS_SYMBOL` (fixo nesta fase: `BTCUSDT`)
+- `AUTO_ANALYSIS_INTERVAL` (padrão `60`)
+- parâmetros técnicos `AUTO_ANALYSIS_*` (EMA/MACD/RSI/volume/ADX/cooldown)
+
+Observação: o modo `auto_analysis` continua **safe-by-default** e respeita as proteções já existentes (`DRY_RUN`, `ENABLE_ORDER_EXECUTION`, `BYBIT_TESTNET`).
+Nesta fase, os níveis de `stop_loss` e `take_profits` gerados no `auto_analysis` são **provisórios** para integração operacional com o executor atual e auditoria do fluxo; ainda não representam paridade 1:1 com a lógica dinâmica de break-even/step stop do Pine.
+
 ## Comportamento em runtime
 
 - Nova mensagem chega no chat/canal configurado.

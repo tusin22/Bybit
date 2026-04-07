@@ -13,6 +13,7 @@ class Signal:
     stop_loss: float
     raw_text: str
     operational_intent: str = ""
+    origin: str = "telegram"
     entry_eligible: bool | None = None
     entry_validation_reason: str | None = None
     current_price: float | None = None
