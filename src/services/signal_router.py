@@ -24,4 +24,5 @@ class SignalRouter:
         signal.instrument_qty_step = instrument.qty_step
         signal.instrument_min_order_qty = instrument.min_order_qty
         signal.instrument_min_notional_value = instrument.min_notional_value
+        signal.instrument_max_leverage = instrument.max_leverage
         return signal

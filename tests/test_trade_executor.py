@@ -50,6 +50,9 @@ class FakeExecutionClient:
         self._open_order_lookup = open_order_lookup or {}
         self._fail_positions_on_call = fail_positions_on_call
 
+    def set_leverage(self, *, category, symbol, leverage):
+        return {"retCode": 0, "retMsg": "OK"}
+
     def place_entry_market_order(self, *, order):
         self.calls += 1
         self.last_order = order
@@ -292,6 +295,7 @@ def _eligible_plan(*, side: str = "Buy", qty: float = 0.1, eligible: bool = True
         min_order_qty="0.001",
         min_notional_value="5",
         instrument_status="Trading",
+        max_leverage="50",
         eligible=eligible,
         ineligibility_reason=None if eligible else "fora da estratégia",
     )

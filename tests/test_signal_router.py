@@ -21,6 +21,7 @@ class FakeBybitClient:
             qty_step="0.001",
             min_order_qty="0.001",
             min_notional_value="5",
+            max_leverage="50",
             raw={"symbol": symbol},
         )
 

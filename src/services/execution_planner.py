@@ -207,6 +207,7 @@ class ExecutionPlanner:
             min_order_qty=min_order_qty,
             min_notional_value=min_notional_value,
             instrument_status=instrument_status,
+            max_leverage=signal.instrument_max_leverage,
             eligible=True,
             ineligibility_reason=None,
         )
@@ -299,6 +300,7 @@ class ExecutionPlanner:
             min_order_qty=signal.instrument_min_order_qty,
             min_notional_value=signal.instrument_min_notional_value,
             instrument_status=signal.instrument_status,
+            max_leverage=signal.instrument_max_leverage,
             eligible=False,
             ineligibility_reason=reason,
         )

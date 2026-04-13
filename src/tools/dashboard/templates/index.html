@@ -1,0 +1,1296 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bybit Bot Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-base: #0B0E14;
+            --bg-panel: #181A20;
+            --bg-panel-hover: #1E2026;
+            --border: #2B3139;
+            --text-main: #EAECEF;
+            --text-muted: #848E9C;
+            --color-green: #0ECB81;
+            --color-red: #F6465D;
+            --color-blue: #2962FF;
+            --color-cyan: #00E676;
+            --color-warning: #F0B90B;
+            --border-radius: 8px;
+            --transition: all 0.3s ease;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Layout */
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* Tabs Nav */
+        .tabs-nav {
+            display: flex;
+            gap: 12px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0px;
+            margin-bottom: 0px;
+            margin-top: 10px;
+        }
+
+        .tab-btn {
+            background: transparent;
+            color: var(--text-muted);
+            border: none;
+            padding: 12px 24px;
+            font-size: 1rem;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            border-radius: 0;
+            transition: all 0.2s ease;
+        }
+        .tab-btn:hover {
+            color: var(--text-main);
+            background: rgba(43, 49, 57, 0.3);
+        }
+        .tab-btn.active {
+            color: var(--color-green);
+            border-bottom: 2px solid var(--color-green);
+            background: rgba(14, 203, 129, 0.05);
+        }
+
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.2s ease;
+        }
+        .tab-content.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Navbar */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--bg-panel);
+            padding: 16px 24px;
+            border-radius: var(--border-radius);
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 1.2rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            background: linear-gradient(90deg, #00E676, #00B0FF);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 6px 12px;
+            border-radius: 20px;
+            background: rgba(132, 142, 156, 0.1);
+            color: var(--text-muted);
+            transition: var(--transition);
+        }
+
+        .status-badge.active {
+            background: rgba(14, 203, 129, 0.1);
+            color: var(--color-green);
+        }
+        
+        .status-badge .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+        .status-badge.active .dot {
+            background: var(--color-green);
+            box-shadow: 0 0 8px var(--color-green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(14, 203, 129, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(14, 203, 129, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(14, 203, 129, 0); }
+        }
+
+        button {
+            border: none;
+            outline: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-family: inherit;
+            font-weight: 600;
+            font-size: 0.9rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: var(--transition);
+        }
+
+        .btn-play {
+            background: var(--color-green);
+            color: #000;
+        }
+        .btn-play:hover {
+            box-shadow: 0 0 12px rgba(14, 203, 129, 0.5);
+            transform: translateY(-1px);
+        }
+
+        .btn-stop {
+            background: var(--color-red);
+            color: #fff;
+        }
+        .btn-stop:hover {
+            box-shadow: 0 0 12px rgba(246, 70, 93, 0.5);
+            transform: translateY(-1px);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        /* Cards Row */
+        .cards-grid {
+            grid-area: cards;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+        }
+
+        .card {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: var(--border-radius);
+            padding: 14px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: var(--text-muted);
+            transition: var(--transition);
+        }
+
+        .card:hover::before {
+            background: var(--color-cyan);
+        }
+
+        .card-title {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .card-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+        
+        .val-green { color: var(--color-green); }
+        .val-red { color: var(--color-red); }
+
+        /* Main Content (Tables) */
+        .main-content {
+            grid-area: main;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .panel {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: var(--border-radius);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            font-weight: 600;
+            font-size: 1.1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-header .badge {
+            background: var(--color-blue);
+            color: white;
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 12px;
+        }
+
+        .table-container {
+            width: 100%;
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        th {
+            background: rgba(43, 49, 57, 0.4);
+            color: var(--text-muted);
+            font-weight: 500;
+            font-size: 0.85rem;
+            padding: 12px 20px;
+            text-transform: uppercase;
+        }
+
+        td {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.95rem;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:hover td {
+            background: var(--bg-panel-hover);
+        }
+
+        .side-long {
+            color: var(--color-green);
+            background: rgba(14, 203, 129, 0.1);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .side-short {
+            color: var(--color-red);
+            background: rgba(246, 70, 93, 0.1);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        
+        .tp-tags {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 6px;
+        }
+        
+        .tp-tag {
+            font-size: 0.75rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: #2B3139;
+            color: var(--text-muted);
+        }
+        
+        .tp-tag.filled {
+            background: rgba(14, 203, 129, 0.2);
+            color: var(--color-green);
+            border: 1px solid rgba(14, 203, 129, 0.5);
+        }
+
+        .empty-state {
+            padding: 40px;
+            text-align: center;
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        /* Sidebar (Live Terminal) */
+        .sidebar {
+            grid-area: sidebar;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            height: calc(100vh - 200px);
+        }
+
+        .terminal-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #000;
+            border: 1px solid var(--border);
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        .terminal-header {
+            background: var(--bg-panel);
+            padding: 10px 16px;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .terminal-header .dots {
+            display: flex;
+            gap: 6px;
+        }
+        
+        .terminal-header .dot-mac { width: 10px; height: 10px; border-radius: 50%; }
+        .terminal-header .dot-mac:nth-child(1) { background: #FF5F56; }
+        .terminal-header .dot-mac:nth-child(2) { background: #FFBD2E; }
+        .terminal-header .dot-mac:nth-child(3) { background: #27C93F; }
+
+        .terminal-body {
+            flex: 1;
+            padding: 16px;
+            overflow-y: auto;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.85rem;
+            color: #A9B7C6;
+            line-height: 1.6;
+            scroll-behavior: smooth;
+        }
+
+        .log-line { margin-bottom: 4px; word-break: break-all; }
+        .log-info { color: #6A8759; }
+        .log-warn { color: #CC7832; }
+        .log-error { color: #CC0000; }
+        .log-debug { color: #808080; }
+        
+        /* Auto Refresh indicator */
+        .refresh-indicator {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: var(--bg-panel);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            opacity: 0.7;
+        }
+        .refresh-spinner {
+            width: 12px; height: 12px;
+            border: 2px solid var(--text-muted);
+            border-top-color: var(--color-cyan);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        
+        <header>
+            <div class="brand">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--color-cyan);"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+                Bybit Trade Bot
+            </div>
+            
+            <div class="controls" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                
+                <!-- INLINE BANNERS -->
+                <div id="banner-mainnet" class="status-badge" style="display: none; background: rgba(246,70,93,0.15); border: 1px solid var(--color-red); color: white;">
+                    ⚠️ MAINNET LIVE
+                </div>
+                <div id="banner-testnet" class="status-badge" style="display: none; background: rgba(14,203,129,0.15); border: 1px solid var(--border); color: var(--color-green);">
+                    ✅ TESTNET
+                </div>
+
+                <!-- INLINE TELEMETRY -->
+                <div style="font-size: 0.8rem; color: var(--text-muted); display: flex; gap: 12px; border: 1px solid var(--border); padding: 4px 12px; border-radius: 6px; background: rgba(0,0,0,0.2);">
+                    <div>API: <span id="tel-ping" style="color:#FFF">---</span></div>
+                    <div>Sinal: <span id="tel-last-signal" style="color:#FFF">---</span></div>
+                    <div>Modo: <span id="tel-exec" style="color:#FFF">---</span></div>
+                </div>
+
+                <div id="bot-badge" class="status-badge">
+                    <div class="dot"></div>
+                    <span id="bot-status-text">Desconectado</span>
+                </div>
+                
+                <button id="btn-play" class="btn-play" onclick="startBot()">
+                    ▶️ Iniciar Bot
+                </button>
+                <button id="btn-stop" class="btn-stop" onclick="stopBot()" style="display: none;">
+                    ⏹️ Parar Bot
+                </button>
+                <button id="btn-panic" class="btn-stop" onclick="panicButton()" style="background: var(--color-warning); color: #000; margin-left:12px;">
+                    ⚠️ FECHAR TUDO
+                </button>
+            </div>
+        </header>
+
+        <!-- Tabs Navigation -->
+        <nav class="tabs-nav" style="margin-top: 20px;">
+            <button class="tab-btn active" onclick="switchTab('tab-visao', this)">Visão Geral</button>
+            <button class="tab-btn" onclick="switchTab('tab-sinais', this)">Sinais / Execuções</button>
+            <button class="tab-btn" onclick="switchTab('tab-logs', this)">Live Logs</button>
+        </nav>
+
+        <!-- TAB VISÃO GERAL -->
+        <div id="tab-visao" class="tab-content active">
+
+            <div class="cards-grid">
+                <!-- Row 1 -->
+            <div class="card" title="Seu capital total (Realizado + Não Realizado).">
+                <div class="card-title">Equity Total</div>
+                <div class="card-value" id="val-equity">...</div>
+            </div>
+            <div class="card" title="Total de ganhos ou perdas já fechados (no bolso) da meia-noite até agora.">
+                <div class="card-title">P&L do Dia (Realizado)</div>
+                <div class="card-value" id="val-pnl-realizado">...</div>
+            </div>
+            <div class="card" title="Quantidade da sua carteira sendo mantida como fiança das posições abertas.">
+                <div class="card-title">Margem Usada (%)</div>
+                <div class="card-value" id="val-margin-used">...</div>
+            </div>
+            <div class="card" title="Estimativa de P&L de perda caso TODOS os seus Stop Loss atinjam o preço limite neste exato instante.">
+                <div class="card-title">Risco Exposto (USDT no SL)</div>
+                <div class="card-value" id="val-risk-usdt">...</div>
+            </div>
+            <!-- Row 2 -->
+            <div class="card" title="Total de ordens abertas linear no momento.">
+                <div class="card-title">Posições Abertas</div>
+                <div class="card-value" id="val-pos-count">0</div>
+            </div>
+            <div class="card" title="Seu saldo puro disponível e o quanto a corretora retém na carteira base USDT.">
+                <div class="card-title">Saldos da Conta</div>
+                <div style="font-size: 0.9rem; margin-top: 4px; line-height: 1.4; color: var(--text-main);">
+                    Carteira: <strong id="val-wallet">...</strong><br>
+                    Disponível: <strong id="val-available">...</strong>
+                </div>
+            </div>
+            <div class="card" title="O quanto as suas posições abertas estão flutuando positivamente ou negativamente agora.">
+                <div class="card-title">P&L Não Realizado</div>
+                <div class="card-value" id="val-upnl">...</div>
+            </div>
+            <div class="card" title="Performance do motor do bot hoje. Quantos sinais chegaram do Telegram e quantos viraram ordens.">
+                <div class="card-title">Sistemas (Hoje)</div>
+                <div style="font-size: 0.9rem; margin-top: 4px; line-height: 1.4; color: var(--text-main);">
+                    Sinais Lidos: <strong id="val-sinais-hoje">0</strong><br>
+                    Execuções: <strong id="val-exec-hoje">0</strong>
+                </div>
+            </div> <!-- Closes card (Sistemas) -->
+        </div> <!-- Closes cards-grid -->
+
+        <div class="main-content">
+                
+                <!-- NEW PANEL: ANALYTICS CHART -->
+                <div class="panel">
+                    <div class="panel-header" style="justify-content: space-between;">
+                        <span>Curva de Capital Realizado (P&L Cumulativo)</span>
+                        <span id="chart-total-pnl" style="font-size:0.9rem; font-weight:700;">$0.00</span>
+                    </div>
+                    <div style="width: 100%; height: 160px; padding: 10px;">
+                        <canvas id="pnlChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="panel">
+                <div class="panel-header">
+                    Posições Abertas <span class="badge" id="pos-count">0</span>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Par</th>
+                                <th>Side / Lev.</th>
+                                <th>Tamanho</th>
+                                <th>Entrada / Mark</th>
+                                <th>P&L / Risco USDT</th>
+                                <th>Execução (SL/TP)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-positions">
+                            <tr><td colspan="6" class="empty-state">Carregando dados...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-header">
+                    Histórico Recente (Fechados) <span class="badge" id="hist-count">0</span>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Data/Hora</th>
+                                <th>Par</th>
+                                <th>Side</th>
+                                <th>Tamanho</th>
+                                <th>Entrada → Saída</th>
+                                <th>P&L Fechado</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-history">
+                            <tr><td colspan="6" class="empty-state">Carregando dados...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            </div> <!-- FIM MAIN CONTENT -->
+        </div> <!-- FIM TAB VISÃO GERAL -->
+
+        <!-- TAB SINAIS E EXECUCOES -->
+        <div id="tab-sinais" class="tab-content">
+            <div class="panel" style="margin-bottom: 20px;">
+                <div class="panel-header">
+                    Sinais Recebidos (Journal) <span class="badge" id="sinais-count">0</span>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Data/Hora</th>
+                                <th>Origem</th>
+                                <th>Par / Side</th>
+                                <th>Status do Sinal</th>
+                                <th>Motivo / Retorno</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-sinais">
+                            <tr><td colspan="5" class="empty-state">Aguardando dados...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-header">
+                    Execuções e Slippage <span class="badge" id="exec-count">0</span>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Data/Hora</th>
+                                <th>Par / Side</th>
+                                <th>Planejado</th>
+                                <th>Preço Executado</th>
+                                <th>Slippage</th>
+                            </tr>
+                        </thead>
+                           <tbody id="table-execucoes">
+                            <tr><td colspan="5" class="empty-state">Aguardando dados...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div> <!-- FIM TAB SINAIS -->
+
+        <!-- TAB LOGS -->
+        <div id="tab-logs" class="tab-content">
+            <div class="sidebar" style="width: 100%;">
+                <div class="terminal-panel" style="height: 700px;">
+                    <div class="terminal-header" style="justify-content: space-between;">
+                        <div style="display:flex; gap: 8px; align-items:center;">
+                            <div class="dots">
+                                <div class="dot-mac"></div>
+                                <div class="dot-mac"></div>
+                                <div class="dot-mac"></div>
+                            </div>
+                            Live Terminal
+                        </div>
+                        <div style="display:flex; gap: 12px; font-size:0.8rem;">
+                            <label><input type="checkbox" id="filter-info" checked style="accent-color: var(--color-green);"> INFO</label>
+                            <label><input type="checkbox" id="filter-warn" checked style="accent-color: var(--color-warning);"> WARN</label>
+                            <label><input type="checkbox" id="filter-error" checked style="accent-color: var(--color-red);"> ERROR/CRITICAL</label>
+                        </div>
+                    </div>
+                    <div class="terminal-body" id="terminal">
+                        <div id="sse-waiting" class="log-debug">Conexão terminal estabelecida. Aguardando logs...</div>
+                    </div>
+                </div>
+            </div>
+        </div> <!-- FIM TAB LOGS -->
+
+    </div>
+
+    <div class="refresh-indicator">
+        <div class="refresh-spinner"></div>
+        Auto-Atualizando (5s)
+    </div>
+
+    <script>
+        // ---------- TABS NAVIGATION ----------
+        function switchTab(tabId, btnElement) {
+            // Remove active from all contents
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            // Remove active from all buttons
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            
+            // Add active to selected content and button
+            document.getElementById(tabId).classList.add('active');
+            btnElement.classList.add('active');
+        }
+
+        const formatterNum = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+        const formatterCurr = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+
+        function formatVal(v) {
+            if(!v) return "0.00";
+            return formatterNum.format(parseFloat(v));
+        }
+
+        function formatColor(v) {
+            let num = parseFloat(v);
+            if (num > 0) return `<span class="val-green">+${formatVal(num)}</span>`;
+            if (num < 0) return `<span class="val-red">${formatVal(num)}</span>`;
+            return `<span>${formatVal(num)}</span>`;
+        }
+
+        function determineOrderLabel(orderLinkId) {
+            if(orderLinkId.startsWith("tp")) return orderLinkId.split("-")[0].toUpperCase();
+            return "Order";
+        }
+
+        // ---------- POLlING DE STATUS E INTERFACE ----------
+        async function fetchStatus() {
+            try {
+                const startT = performance.now();
+                const res = await fetch('/api/status');
+                const data = await res.json();
+                const endT = performance.now();
+                const ping = Math.round(endT - startT);
+                
+                document.getElementById('tel-ping').innerText = ping + "ms";
+                if (ping < 300) document.getElementById('tel-ping').style.color = "var(--color-green)";
+                else if (ping < 800) document.getElementById('tel-ping').style.color = "var(--color-warning)";
+                else document.getElementById('tel-ping').style.color = "var(--color-red)";
+                
+                // Cards
+                if(!data.wallet.error) {
+                    document.getElementById('val-equity').innerText = formatterCurr.format(parseFloat(data.wallet.total_equity));
+                    document.getElementById('val-wallet').innerText = formatterCurr.format(parseFloat(data.wallet.total_wallet_balance));
+                    document.getElementById('val-upnl').innerHTML = formatColor(data.wallet.total_unrealised_pnl);
+                    document.getElementById('val-available').innerText = formatterCurr.format(parseFloat(data.wallet.usdt_available || data.wallet.total_available_balance));
+                    
+                    let marginPercent = parseFloat(data.wallet.margin_used_percent);
+                    if (marginPercent <= 0) {
+                        document.getElementById('val-margin-used').innerHTML = `<span style="color:var(--text-muted); font-size: 0.9rem;">Sem Uso de Margem</span>`;
+                    } else {
+                        document.getElementById('val-margin-used').innerHTML = `
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                ${data.wallet.margin_used_percent}%
+                                <div style="flex:1;height:4px;background:#2B3139;border-radius:2px;overflow:hidden;">
+                                    <div style="width:${Math.min(100, marginPercent)}%;height:100%;background:var(--color-warning);"></div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                }
+
+                // Positions and Risk Calculation
+                const tbodyPos = document.getElementById('table-positions');
+                let totalRiskUsdt = 0;
+
+                if (data.positions.length === 0) {
+                    tbodyPos.innerHTML = '<tr><td colspan="6" class="empty-state">Nenhuma posição aberta no momento.</td></tr>';
+                } else {
+                    let htmlPos = '';
+                    data.positions.forEach(p => {
+                        let sideClass = p.side === 'Buy' ? 'side-long' : 'side-short';
+                        let sideText = p.side === 'Buy' ? 'LONG' : 'SHORT';
+                        
+                        let tpsHtml = '';
+                        if (p.tps && p.tps.length > 0) {
+                            p.tps.forEach(tp => {
+                                let label = determineOrderLabel(tp.order_link_id);
+                                let isFilled = tp.order_status === "Filled";
+                                let tpCls = isFilled ? "filled" : "";
+                                let icon = isFilled ? "✅" : "⏳";
+                                tpsHtml += `<span class="tp-tag ${tpCls}">${icon} ${label}: ${formatVal(tp.price)}</span>`;
+                            });
+                        }
+
+                        let riskStr = parseFloat(p.position_risk_usdt) > 0 
+                            ? `<br><span style="color:var(--color-red);font-size:0.8rem">-R$ ${p.position_risk_usdt} no SL</span>` 
+                            : `<br><span style="color:var(--text-muted);font-size:0.8rem">Sem SL</span>`;
+                            
+                        totalRiskUsdt += parseFloat(p.position_risk_usdt);
+
+                        htmlPos += `
+                            <tr>
+                                <td>
+                                    <strong>${p.symbol}</strong><br>
+                                    <button onclick="closePosition('${p.symbol}')" style="background: rgba(246, 70, 93, 0.1); color: var(--color-red); border: 1px solid rgba(246, 70, 93, 0.3); padding: 4px 8px; font-size: 0.7rem; border-radius: 4px; margin-top: 6px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                                        ✖ Fechar a Mercado
+                                    </button>
+                                </td>
+                                <td><span class="${sideClass}">${sideText}</span> <small>${p.leverage}x</small></td>
+                                <td>${p.size}</td>
+                                <td>${formatVal(p.entry_price)} <br> <span style="color:var(--text-muted);font-size:0.8rem">${formatVal(p.mark_price)}</span></td>
+                                <td><strong>${formatColor(p.unrealised_pnl)}</strong> ${riskStr}</td>
+                                <td>
+                                    <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:4px">
+                                        SL: <strong style="color:#EAECEF">${p.stop_loss !== "0" ? formatVal(p.stop_loss) : "N/A"}</strong>
+                                    </div>
+                                    <div class="tp-tags">${tpsHtml || '<span style="font-size:0.8rem;color:var(--text-muted)">Sem TPs (reduceOnly) pendentes</span>'}</div>
+                                </td>
+                            </tr>
+                        `;
+                    });
+                    tbodyPos.innerHTML = htmlPos;
+                }
+
+                document.getElementById('val-pos-count').innerText = data.positions.length;
+                if (totalRiskUsdt <= 0) {
+                    document.getElementById('val-risk-usdt').innerHTML = `<span style="color:var(--text-muted)">$0.00</span>`;
+                } else {
+                    document.getElementById('val-risk-usdt').innerHTML = `<span class="val-red">-$${formatterCurr.format(totalRiskUsdt).replace('$', '')}</span>`;
+                }
+
+                // History
+                const tbodyHist = document.getElementById('table-history');
+                
+                let sumRealizedToday = 0;
+                let todayMidnight = new Date();
+                todayMidnight.setHours(0,0,0,0);
+
+                if (data.history.length === 0) {
+                    tbodyHist.innerHTML = '<tr><td colspan="6" class="empty-state">Nenhum histórico recente.</td></tr>';
+                } else {
+                    let htmlHist = '';
+                    data.history.forEach(h => {
+                        let sideClass = h.side === 'Buy' ? 'side-long' : 'side-short';
+                        let sideText = h.side === 'Buy' ? 'LONG' : 'SHORT';
+                        let closedTime = parseInt(h.updated_time || h.created_time);
+                        let date = new Date(closedTime);
+                        
+                        if (date >= todayMidnight) {
+                            sumRealizedToday += parseFloat(h.closed_pnl || "0");
+                        }
+
+                        htmlHist += `
+                            <tr>
+                                <td style="font-size:0.8rem;color:var(--text-muted)">${date.toLocaleString('pt-BR')}</td>
+                                <td><strong>${h.symbol}</strong></td>
+                                <td><span class="${sideClass}">${sideText}</span> <small>${h.leverage||'?'}x</small></td>
+                                <td>${h.qty}</td>
+                                <td>${formatVal(h.entry_price)} <br><span style="color:var(--text-muted)">→ ${formatVal(h.exit_price)}</span></td>
+                                <td><strong>${formatColor(h.closed_pnl)}</strong></td>
+                            </tr>
+                        `;
+                    });
+                    tbodyHist.innerHTML = htmlHist;
+                }
+
+                document.getElementById('val-pnl-realizado').innerHTML = formatColor(sumRealizedToday);
+
+                // Update Chart
+                updatePnlChart(data.history);
+
+            } catch(e) {
+                console.error("Erro no fetchStatus: ", e);
+            }
+        }
+
+        // Charts Global
+        let pnlChartInstance = null;
+
+        function updatePnlChart(historyData) {
+            if (!historyData || historyData.length === 0) return;
+            
+            const chronological = [...historyData].reverse();
+            let cumulative = 0;
+            const labels = ['Início'];
+            const dataPoints = [0];
+
+            chronological.forEach(h => {
+                const pnl = parseFloat(h.closed_pnl || "0");
+                cumulative += pnl;
+                let closedTime = parseInt(h.updated_time || h.created_time || "0");
+                if (closedTime === 0) return;
+                
+                let date = new Date(closedTime);
+                let timeStr = date.toLocaleDateString() + ' ' + date.getHours().toString().padStart(2,'0') + ':' + date.getMinutes().toString().padStart(2,'0');
+                labels.push(timeStr);
+                dataPoints.push(cumulative);
+            });
+
+            // Update Header Score
+            const totalSpan = document.getElementById('chart-total-pnl');
+            if(cumulative >= 0) {
+                totalSpan.innerHTML = `<span style="color:var(--color-green)">+$${cumulative.toFixed(2)}</span>`;
+            } else {
+                totalSpan.innerHTML = `<span style="color:var(--color-red)">-$${Math.abs(cumulative).toFixed(2)}</span>`;
+            }
+
+            const ctx = document.getElementById('pnlChart').getContext('2d');
+            const lineColor = cumulative >= 0 ? '#0ECB81' : '#F6465D';
+            const bgColor = cumulative >= 0 ? 'rgba(14, 203, 129, 0.1)' : 'rgba(246, 70, 93, 0.1)';
+
+            if (pnlChartInstance) {
+                pnlChartInstance.data.labels = labels;
+                pnlChartInstance.data.datasets[0].data = dataPoints;
+                pnlChartInstance.data.datasets[0].borderColor = lineColor;
+                pnlChartInstance.data.datasets[0].backgroundColor = bgColor;
+                pnlChartInstance.update('none'); 
+            } else {
+                pnlChartInstance = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Crescimento de Capital (USDT)',
+                            data: dataPoints,
+                            borderColor: lineColor,
+                            backgroundColor: bgColor,
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            pointHoverRadius: 5
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: { grid: { color: '#2B3139' }, ticks: { color: '#848E9C' } },
+                            x: { grid: { display: false }, ticks: { display: false } }
+                        },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: { 
+                                mode: 'index', 
+                                intersect: false,
+                                callbacks: { label: function(ctx) { return '$' + ctx.parsed.y.toFixed(2); } }
+                            }
+                        },
+                        interaction: { mode: 'nearest', axis: 'x', intersect: false }
+                    }
+                });
+            }
+        }
+
+        // ---------- CONTROLE DO BOT ----------
+        async function fetchBotStatus() {
+            try {
+                const res = await fetch('/api/bot');
+                const data = await res.json();
+                botRunning = data.running;
+                
+                // Telemetry & Env Banners
+                document.getElementById('tel-exec').innerText = data.live_execution ? "REAL" : "DRY RUN";
+                document.getElementById('tel-exec').style.color = data.live_execution ? "var(--color-red)" : "var(--color-warning)";
+
+                if (!data.testnet && data.live_execution) {
+                    document.getElementById('banner-mainnet').style.display = "block";
+                    document.getElementById('banner-testnet').style.display = "none";
+                } else if (data.testnet) {
+                    document.getElementById('banner-mainnet').style.display = "none";
+                    document.getElementById('banner-testnet').style.display = "block";
+                }
+                
+                updateBotStateUI(data);
+            } catch(e) {
+                console.error("Erro fetch bot status", e);
+            }
+        }
+
+        // ---------- CONTROLE DO JOURNALS (SINAIS E EXECUCOES) ----------
+        async function fetchJournals() {
+            try {
+                const res = await fetch('/api/journals');
+                const data = await res.json();
+                
+                const tbSinais = document.getElementById('table-sinais');
+                const tbExec = document.getElementById('table-execucoes');
+                
+                document.getElementById('sinais-count').innerText = data.journals.length;
+                
+                if (data.journals.length > 0) {
+                    const lastD = new Date(data.journals[0].recordedAt);
+                    const diffMins = Math.floor((new Date() - lastD) / 60000);
+                    let txt = diffMins < 60 ? `Há ${diffMins} min` : (diffMins < 1440 ? `Há ${Math.floor(diffMins/60)} horas` : lastD.toLocaleDateString());
+                    document.getElementById('tel-last-signal').innerText = txt;
+                }
+
+                let sinaisHtml = '';
+                let execHtml = '';
+                let execCount = 0;
+
+                if (data.journals.length === 0) {
+                    tbSinais.innerHTML = '<tr><td colspan="5" class="empty-state">Nenhum sinal no journal.</td></tr>';
+                    tbExec.innerHTML = '<tr><td colspan="5" class="empty-state">Nenhuma execução recente.</td></tr>';
+                    return;
+                }
+
+                data.journals.forEach(j => {
+                    let d = new Date(j.recordedAt).toLocaleString('pt-BR');
+                    
+                    // Sinal row
+                    let symbol = j.signal && j.signal.symbol ? j.signal.symbol : '---';
+                    let side = j.signal && j.signal.side ? j.signal.side : '---';
+                    let statusColor = "var(--text-main)";
+                    let statusIcon = "ℹ️";
+                    if (j.status === "completed") { statusColor = "var(--color-green)"; statusIcon = "✅"; }
+                    else if (j.status === "safe_failure") { statusColor = "var(--color-warning)"; statusIcon = "⚠️"; }
+                    else if (j.status === "ignored") { statusColor = "var(--text-muted)"; statusIcon = "🚫"; }
+                    
+                    let motivo = (j.successOrFailureReason && j.successOrFailureReason.length > 50) 
+                                 ? j.successOrFailureReason.substring(0, 50) + "..." 
+                                 : (j.successOrFailureReason || "---");
+
+                    sinaisHtml += `
+                        <tr>
+                            <td style="font-size:0.8rem;color:var(--text-muted)">${d}</td>
+                            <td>Telegram</td>
+                            <td><strong>${symbol}</strong> <span style="color:var(--text-muted)">${side}</span></td>
+                            <td style="color:${statusColor}">${statusIcon} ${j.status.toUpperCase()}</td>
+                            <td style="font-size:0.85rem">${motivo}</td>
+                        </tr>
+                    `;
+                    
+                    // Execucao row (se houver execucao preenchida)
+                    if (j.execution && j.execution.entryOrderId) {
+                        execCount++;
+                        let planejado = j.plan && j.plan.entry_price ? formatVal(j.plan.entry_price) : "A Mercado";
+                        let executado = j.execution.averagePrice ? formatVal(j.execution.averagePrice) : "---";
+                        let slippage = "---";
+                        
+                        // Pseudo cálculo de slippage (ignora side no delta apenas pro tooltip/display simple)
+                        if (planejado !== "A Mercado" && executado !== "---" && parseFloat(planejado) > 0) {
+                            let diff = Math.abs(parseFloat(executado) - parseFloat(j.plan.entry_price));
+                            let p = (diff / parseFloat(j.plan.entry_price)) * 100;
+                            slippage = p.toFixed(2) + "%";
+                        }
+                        
+                        execHtml += `
+                            <tr>
+                                <td style="font-size:0.8rem;color:var(--text-muted)">${d}</td>
+                                <td><strong>${symbol}</strong> <span style="color:var(--text-muted)">${side}</span></td>
+                                <td>${planejado}</td>
+                                <td>${executado}</td>
+                                <td>${slippage}</td>
+                            </tr>
+                        `;
+                    }
+                });
+
+                tbSinais.innerHTML = sinaisHtml;
+                
+                if (execCount === 0) {
+                    tbExec.innerHTML = '<tr><td colspan="5" class="empty-state">Nenhuma execução recente.</td></tr>';
+                } else {
+                    tbExec.innerHTML = execHtml;
+                }
+                document.getElementById('exec-count').innerText = execCount;
+
+                // Update the Top 8th Card
+                let sinaisHoje = 0;
+                let execHoje = 0;
+                let todayMidnight = new Date();
+                todayMidnight.setHours(0,0,0,0);
+                
+                data.journals.forEach(j => {
+                    let d = new Date(j.recordedAt);
+                    if(d >= todayMidnight) {
+                        sinaisHoje++;
+                        if(j.execution && j.execution.entryOrderId) {
+                            execHoje++;
+                        }
+                    }
+                });
+                
+                document.getElementById('val-sinais-hoje').innerText = sinaisHoje;
+                document.getElementById('val-exec-hoje').innerText = execHoje;
+
+            } catch(e) {
+                console.error("Erro fetch journals", e);
+            }
+        }
+
+        function updateBotStateUI(data) {
+            const badge = document.getElementById('bot-badge');
+            const text = document.getElementById('bot-status-text');
+            const btnPlay = document.getElementById('btn-play');
+            const btnStop = document.getElementById('btn-stop');
+
+            // Reset classes
+            badge.classList.remove('active');
+            badge.style.background = '';
+            badge.style.color = '';
+            btnPlay.style.display = 'none';
+            btnStop.style.display = 'none';
+
+            if (data.running) {
+                // Internal running
+                badge.classList.add('active');
+                text.innerText = 'Bot ONLINE';
+                btnStop.style.display = 'flex';
+                btnStop.innerHTML = '⏹️ Parar Bot';
+            } else if (data.external) {
+                // External running
+                badge.style.background = 'rgba(240, 185, 11, 0.1)';
+                badge.style.color = 'var(--color-warning)';
+                const dot = badge.querySelector('.dot');
+                if (dot) dot.style.background = 'var(--color-warning)';
+                
+                text.innerText = 'Bot em OUTRO Terminal';
+                
+                // Show disabled play button to explain
+                btnPlay.style.display = 'flex';
+                btnPlay.disabled = true;
+                btnPlay.style.background = '#444';
+                btnPlay.innerHTML = '⚠️ Feche o terminal avulso primeiro';
+                
+                const term = document.getElementById("terminal");
+                if (term.children.length === 1 && term.innerText.includes("Aguardando")) {
+                    term.innerHTML = '<div class="log-line log-warn">>> O bot está rodando em uma janela de terminal avulsa no seu PC.</div>' +
+                                     '<div class="log-line log-warn">>> Você pode ver os status e saldos aqui, mas os logs em tempo real não aparecerão.</div>' +
+                                     '<div class="log-line log-warn">>> Feche a janela externa e clique em Iniciar Bot pelo painel caso deseje o controle total aqui.</div>';
+                }
+            } else {
+                // Stopped everywhere
+                text.innerText = 'Bot PARADO';
+                btnPlay.style.display = 'flex';
+                btnPlay.disabled = false;
+                btnPlay.style.background = 'var(--color-green)';
+                btnPlay.innerHTML = '▶️ Iniciar Bot';
+                const dot = badge.querySelector('.dot');
+                if (dot) {
+                    dot.style.background = 'var(--text-muted)';
+                    dot.style.boxShadow = 'none';
+                }
+            }
+        }
+
+        async function startBot() {
+            document.getElementById('btn-play').disabled = true;
+            try {
+                const res = await fetch('/api/bot/start', {method: 'POST'});
+                const data = await res.json();
+                if(!data.success) alert(data.message);
+            } finally {
+                document.getElementById('btn-play').disabled = false;
+                fetchBotStatus();
+            }
+        }
+
+        async function stopBot() {
+            document.getElementById('btn-stop').disabled = true;
+            try {
+                const res = await fetch('/api/bot/stop', {method: 'POST'});
+                const data = await res.json();
+                if(!data.success) alert(data.message);
+            } finally {
+                document.getElementById('btn-stop').disabled = false;
+                fetchBotStatus();
+            }
+        }
+
+        async function panicButton() {
+            const confirmed = window.confirm(
+                "⚠️ TEM CERTEZA ABSOLUTA?\n\nIsso irá:\n1. Parar o Bot imediatamente.\n2. CANCELAR TODAS as ordens, Take Profits e Stop Losses pendentes.\n3. Enviar ordens a Mercado invertidas para FECHAR TODAS as suas posições Abertas instantaneamente."
+            );
+            if (!confirmed) return;
+
+            document.getElementById('btn-panic').disabled = true;
+            document.getElementById('btn-panic').innerText = "Processando...";
+
+            try {
+                const res = await fetch('/api/panic', {method: 'POST'});
+                const data = await res.json();
+                alert(data.message);
+                
+                // Force an immediate refresh to see the empty positions
+                fetchStatus();
+                fetchBotStatus();
+            } catch(e) {
+                alert("Erro ao disparar pânico: " + e.message);
+            } finally {
+                document.getElementById('btn-panic').disabled = false;
+                document.getElementById('btn-panic').innerText = "⚠️ FECHAR TUDO";
+            }
+        }
+
+        async function closePosition(symbol) {
+            const confirmed = window.confirm(
+                `Tem certeza que deseja FECHAR A MERCADO a posição de ${symbol} e deletar todas as ordens vinculadas a ela?`
+            );
+            if (!confirmed) return;
+
+            try {
+                const res = await fetch('/api/position/close', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbol: symbol })
+                });
+                const data = await res.json();
+                alert(data.message);
+                fetchStatus(); // Recarrega tela
+            } catch(e) {
+                alert("Erro ao fechar posição: " + e.message);
+            }
+        }
+
+        // ---------- SSE (LIVE LOGS) ----------
+        function applyLogFilters() {
+            const showInfo = document.getElementById('filter-info').checked;
+            const showWarn = document.getElementById('filter-warn').checked;
+            const showError = document.getElementById('filter-error').checked;
+            
+            const term = document.getElementById("terminal");
+            Array.from(term.children).forEach(div => {
+                if(div.classList.contains('log-info')) div.style.display = showInfo ? 'block' : 'none';
+                if(div.classList.contains('log-warn')) div.style.display = showWarn ? 'block' : 'none';
+                if(div.classList.contains('log-error')) div.style.display = showError ? 'block' : 'none';
+            });
+        }
+        
+        document.getElementById('filter-info').addEventListener('change', applyLogFilters);
+        document.getElementById('filter-warn').addEventListener('change', applyLogFilters);
+        document.getElementById('filter-error').addEventListener('change', applyLogFilters);
+
+        function startLogStream() {
+            const evSource = new EventSource("/api/logs/stream");
+            const term = document.getElementById("terminal");
+
+            evSource.onmessage = function(event) {
+                const htmlString = event.data;
+                const div = document.createElement('div');
+                div.className = 'log-line';
+                
+                let isInfo = false, isWarn = false, isErr = false;
+                
+                // Colorize via naive keyword search
+                if(htmlString.includes("INFO")) {
+                    div.classList.add("log-info");
+                    isInfo = true;
+                }
+                else if(htmlString.includes("WARNING")) {
+                    div.classList.add("log-warn");
+                    isWarn = true;
+                }
+                else if(htmlString.includes("ERROR") || htmlString.includes("Exception")) {
+                    div.classList.add("log-error");
+                    isErr = true;
+                }
+                else {
+                    div.classList.add("log-debug");
+                }
+                
+                div.innerText = htmlString;
+                
+                // Remover aviso de aguardando se existir
+                const waitingDiv = document.getElementById("sse-waiting");
+                if (waitingDiv) {
+                    waitingDiv.remove();
+                }
+                
+                // Apply current filters dynamically to new lines
+                const showInfo = document.getElementById('filter-info').checked;
+                const showWarn = document.getElementById('filter-warn').checked;
+                const showError = document.getElementById('filter-error').checked;
+                
+                if (isInfo && !showInfo) div.style.display = 'none';
+                if (isWarn && !showWarn) div.style.display = 'none';
+                if (isErr && !showError) div.style.display = 'none';
+                
+                term.appendChild(div);
+
+                // Keep only last 1000 items in DOM to prevent lag
+                while(term.childNodes.length > 1000) {
+                    term.removeChild(term.firstChild);
+                }
+
+                // Autoscroll
+                term.scrollTop = term.scrollHeight;
+            };
+
+            evSource.onerror = function(err) {
+                console.error("SSE conect error", err);
+            };
+        }
+
+        // Initialization
+        fetchStatus();
+        fetchBotStatus();
+        fetchJournals();
+        startLogStream();
+
+        setInterval(fetchStatus, 5000);
+        setInterval(fetchBotStatus, 5000);
+        setInterval(fetchJournals, 5000);
+
+    </script>
+</body>
+</html>

@@ -20,6 +20,7 @@ class ExecutionPlan:
     min_order_qty: str | None
     min_notional_value: str | None
     instrument_status: str | None
+    max_leverage: str | None
     eligible: bool
     ineligibility_reason: str | None = None
 

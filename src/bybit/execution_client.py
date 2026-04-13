@@ -48,6 +48,73 @@ class BybitExecutionClient:
         else:
             self._http = HTTP(testnet=testnet)
 
+    def set_leverage(
+        self,
+        *,
+        category: str,
+        symbol: str,
+        leverage: int,
+    ) -> dict[str, object]:
+        """Configura alavancagem para o símbolo.
+
+        Em one-way mode, buyLeverage e sellLeverage devem ser iguais.
+        Referência: https://bybit-exchange.github.io/docs/v5/position/leverage
+        pybit: session.set_leverage(category, symbol, buyLeverage, sellLeverage)
+        """
+        if not self._has_auth:
+            raise BybitExecutionClientError(
+                "Credenciais Bybit ausentes: BYBIT_API_KEY e BYBIT_API_SECRET são obrigatórios para set_leverage."
+            )
+
+        leverage_str = str(leverage)
+        response = self._http.set_leverage(
+            category=category,
+            symbol=symbol,
+            buyLeverage=leverage_str,
+            sellLeverage=leverage_str,
+        )
+
+        ret_code = response.get("retCode")
+        # retCode 110043 = "Set leverage not modified" — alavancagem já está no valor solicitado
+        if ret_code not in (0, 110043):
+            ret_msg = response.get("retMsg", "")
+            raise BybitExecutionClientError(
+                f"Falha Bybit em set_leverage: retCode={ret_code} retMsg={ret_msg}"
+            )
+        return response
+
+    def ensure_one_way_mode(
+        self,
+        *,
+        category: str,
+        coin: str = "USDT",
+    ) -> dict[str, object]:
+        """Garante que a conta está em one-way mode (positionIdx=0).
+
+        Referência: https://bybit-exchange.github.io/docs/v5/position/position-mode
+        pybit: session.switch_position_mode(category, mode, coin)
+        mode=0 → MergedSingle (one-way)
+        """
+        if not self._has_auth:
+            raise BybitExecutionClientError(
+                "Credenciais Bybit ausentes: BYBIT_API_KEY e BYBIT_API_SECRET são obrigatórios para switch_position_mode."
+            )
+
+        response = self._http.switch_position_mode(
+            category=category,
+            mode=0,
+            coin=coin,
+        )
+
+        ret_code = response.get("retCode")
+        # retCode 110025 = "Position mode is not modified" — já está em one-way
+        if ret_code not in (0, 110025):
+            ret_msg = response.get("retMsg", "")
+            raise BybitExecutionClientError(
+                f"Falha Bybit em switch_position_mode: retCode={ret_code} retMsg={ret_msg}"
+            )
+        return response
+
     def place_entry_market_order(self, *, order: BybitOrderRequest) -> dict[str, object]:
         if not self._has_auth:
             raise BybitExecutionClientError(

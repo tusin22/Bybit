@@ -38,6 +38,7 @@ class FakePlanner:
             min_order_qty="0.001",
             min_notional_value="5",
             instrument_status="Trading",
+            max_leverage="50",
             eligible=True,
             ineligibility_reason=None,
         )

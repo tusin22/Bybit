@@ -12,6 +12,8 @@ Fontes oficiais obrigatórias para integrações deste projeto.
 - Get Open & Closed Orders (V5): https://bybit-exchange.github.io/docs/v5/order/open-order
 - Get Order History (V5): https://bybit-exchange.github.io/docs/v5/order/order-list
 - Set Trading Stop (V5): https://bybit-exchange.github.io/docs/v5/position/trading-stop
+- Set Leverage (V5): https://bybit-exchange.github.io/docs/v5/position/leverage
+- Switch Position Mode (V5): https://bybit-exchange.github.io/docs/v5/position/position-mode
 
 ## pybit
 - Repositório oficial: https://github.com/bybit-exchange/pybit

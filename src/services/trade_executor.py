@@ -116,7 +116,7 @@ class _ExecutionMonitorResult:
 
 
 class TradeExecutor:
-    """Executa entrada de ordem market na Bybit testnet com proteções explícitas."""
+    """Executa entrada de ordem market na Bybit com proteções explícitas."""
 
     def __init__(
         self,
@@ -141,6 +141,7 @@ class TradeExecutor:
         self._validate_take_profit_distribution(self._tp_distribution.percents)
         self._execution_client = execution_client
         self._private_ws_monitor = private_ws_monitor
+        self._leverage = settings.leverage
 
     def execute_entry(self, *, plan: ExecutionPlan) -> ExecutionResult:
         if self._flags.dry_run:
@@ -158,10 +159,10 @@ class TradeExecutor:
             )
 
         if not self._flags.bybit_testnet:
-            return self._blocked_result(
-                plan=plan,
-                reason="Execução bloqueada por proteção: BYBIT_TESTNET=false nesta fase.",
-                blocked_by_testnet_guard=True,
+            LOGGER.info(
+                "Execução em mainnet ativa (BYBIT_TESTNET=false). symbol=%s category=%s",
+                plan.symbol,
+                plan.category,
             )
 
         if not plan.eligible:
@@ -176,13 +177,16 @@ class TradeExecutor:
         order_qty = _format_qty(plan.planned_quantity, qty_step=plan.qty_step)
 
         LOGGER.info(
-            "Preparando envio de ordem de entrada. symbol=%s category=%s planned_quantity=%s instrument_qty_step=%s serialized_qty=%s",
+            "Preparando envio de ordem de entrada. symbol=%s category=%s planned_quantity=%s instrument_qty_step=%s serialized_qty=%s leverage=%s",
             plan.symbol,
             plan.category,
             plan.planned_quantity,
             plan.qty_step,
             order_qty,
+            self._leverage,
         )
+
+        self._apply_leverage(symbol=plan.symbol, category=plan.category, max_leverage=plan.max_leverage)
 
         response = self._execution_client.place_entry_market_order(
             order=BybitOrderRequest(
@@ -915,6 +919,56 @@ class TradeExecutor:
 
         return False
 
+
+    def _apply_leverage(self, *, symbol: str, category: str, max_leverage: str | None) -> None:
+        """Configura alavancagem antes do envio de ordem.
+
+        Se o instrumento tem maxLeverage menor que o solicitado,
+        usa o máximo disponível. Erros são logados mas não bloqueiam
+        execução.
+        """
+        effective_leverage = self._leverage
+        if max_leverage is not None:
+            try:
+                max_lev_int = int(float(max_leverage))
+                if max_lev_int > 0 and self._leverage > max_lev_int:
+                    LOGGER.info(
+                        "Leverage solicitada (%sx) excede maxLeverage do instrumento (%sx). Usando %sx. symbol=%s",
+                        self._leverage,
+                        max_lev_int,
+                        max_lev_int,
+                        symbol,
+                    )
+                    effective_leverage = max_lev_int
+            except (ValueError, TypeError):
+                LOGGER.warning(
+                    "Não foi possível interpretar maxLeverage=%s para %s. Usando leverage configurada (%sx).",
+                    max_leverage,
+                    symbol,
+                    self._leverage,
+                )
+
+        try:
+            self._execution_client.set_leverage(
+                category=category,
+                symbol=symbol,
+                leverage=effective_leverage,
+            )
+            LOGGER.info(
+                "Alavancagem configurada com sucesso. symbol=%s category=%s leverage=%sx max_leverage=%s",
+                symbol,
+                category,
+                effective_leverage,
+                max_leverage or "N/A",
+            )
+        except BybitExecutionClientError as exc:
+            LOGGER.warning(
+                "Falha ao configurar alavancagem (execução continuará com alavancagem atual da conta). symbol=%s category=%s leverage=%sx reason=%s",
+                symbol,
+                category,
+                effective_leverage,
+                exc,
+            )
 
     def _validate_critical_data(self, *, plan: ExecutionPlan) -> None:
         if not plan.symbol.strip():

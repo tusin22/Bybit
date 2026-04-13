@@ -33,10 +33,14 @@ class TelegramSignalListener:
         )
 
     async def run(self) -> None:
+        mode = "dry-run" if self._settings.dry_run else "live"
         LOGGER.info(
-            "Iniciando listener Telegram em dry-run. source_chat=%s dry_run=%s",
+            "Iniciando listener Telegram em modo %s. source_chat=%s dry_run=%s enable_order_execution=%s testnet=%s",
+            mode,
             self._settings.telegram_source_chat,
             self._settings.dry_run,
+            self._settings.enable_order_execution,
+            self._settings.bybit_testnet,
         )
 
         await self._client.start()
@@ -66,12 +70,12 @@ class TelegramSignalListener:
 
             try:
                 signal = self._parser.parse(raw_text)
-            except SignalParseError as exc:
-                LOGGER.warning("Mensagem ignorada por parsing inválido: %s", exc)
+            except SignalParseError:
+                LOGGER.debug("Mensagem ignorada (não é sinal válido): %s", raw_text[:80])
                 return
 
             LOGGER.info(
-                "Sinal parseado com sucesso (dry-run): %s",
+                "Sinal parseado com sucesso: %s",
                 json.dumps(signal.to_dict(), ensure_ascii=False),
             )
 

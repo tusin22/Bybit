@@ -12,11 +12,10 @@ Projeto em Python para processar sinais de trade recebidos via Telegram, com evo
 - Consulta de informações do instrumento/símbolo (escopo atual: `category=linear`).
 - Camada de **planejamento de execução** (`ExecutionPlan`) para normalizar preços e qty.
 - Validação pré-envio no plano para mínimos do instrumento (`minOrderQty` e `minNotionalValue`) antes de tentar `place_order`.
-- Primeira camada de **escrita restrita à Bybit testnet** para enviar **apenas ordem de entrada** (`Market`).
+- Primeira camada de **escrita** na Bybit para enviar **apenas ordem de entrada** (`Market`), com suporte a **testnet e mainnet**.
 - Proteções obrigatórias de execução:
   - bloqueio quando `DRY_RUN=true`;
   - bloqueio quando `ENABLE_ORDER_EXECUTION=false`;
-  - bloqueio quando `ENABLE_ORDER_EXECUTION=true` e `BYBIT_TESTNET=false`;
   - bloqueio quando `ExecutionPlan` não for elegível.
 - Log estruturado do resultado da tentativa de execução (`ExecutionResult`).
 - Journal local estruturado por execução/trade em arquivo JSON (auditoria e diagnóstico), sem banco/painel/analytics avançada nesta fase.
@@ -76,12 +75,18 @@ cp .env.example .env
 
 - `DRY_RUN=true` mantém bloqueio total de envio.
 - `ENABLE_ORDER_EXECUTION=false` mantém bloqueio total de envio.
-- Para liberar envio em testnet, as três condições devem ser atendidas ao mesmo tempo:
+- Para liberar envio, as duas condições devem ser atendidas ao mesmo tempo:
   - `DRY_RUN=false`
   - `ENABLE_ORDER_EXECUTION=true`
-  - `BYBIT_TESTNET=true`
 
-5. Configure sizing para planejamento:
+> **ATENÇÃO:** se `BYBIT_TESTNET=false`, ordens serão enviadas para a **Bybit mainnet real**. Revise seus parâmetros de sizing antes de operar em mainnet.
+
+5. Configure alavancagem:
+
+- `LEVERAGE` (padrão `10`): alavancagem aplicada como `buyLeverage` e `sellLeverage` antes de cada trade.
+- No startup, o bot verifica e configura o modo one-way (`positionIdx=0`) automaticamente.
+
+6. Configure sizing para planejamento:
 
 - `EXECUTION_SIZING_MODE=fixed_notional_usdt` (padrão e recomendado nesta fase).
 - `EXECUTION_FIXED_NOTIONAL_USDT` (ex.: `25`), usado com `fixed_notional_usdt`.

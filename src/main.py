@@ -15,7 +15,7 @@ from src.config import load_settings, validate_settings_for_signal_source
 from src.models.execution_plan import ExecutionPlan
 from src.models.execution_result import ExecutionResult, TradeStatus
 from src.models.signal import Signal
-from src.parsing.vectra_parser import VectraSignalParser
+from src.parsing.vectra_parser import SignalParseError, VectraSignalParser
 from src.services.execution_journal import ExecutionJournalService
 from src.services.execution_planner import ExecutionPlanner
 from src.services.signal_router import SignalRouter
@@ -96,6 +96,11 @@ class RoutedSignalParser:
             else:
                 LOGGER.info("Tentativa de execução não enviada: %s", result.blocked_reason)
             return result
+        except SignalParseError as exc:
+            journal_status = "ignored"
+            safe_failure_reason = f"Mensagem ignorada (formato inválido): {exc}"
+            flow_errors.append({"stage": "parsing", "type": "SignalParseError", "message": str(exc)})
+            raise
         except BybitClientError as exc:
             journal_status = "safe_failure"
             safe_failure_reason = f"Falha ao validar sinal na Bybit (read-only): {exc}"
@@ -319,9 +324,23 @@ async def _run() -> int:
         )
     if settings.enable_order_execution and not settings.bybit_testnet:
         LOGGER.warning(
-            "Proteção ativa: ENABLE_ORDER_EXECUTION=true com BYBIT_TESTNET=false. "
-            "Envio será bloqueado nesta fase."
+            "ATENÇÃO: Execução em MAINNET habilitada. "
+            "ENABLE_ORDER_EXECUTION=true com BYBIT_TESTNET=false. "
+            "Ordens serão enviadas para a Bybit mainnet."
         )
+
+    LOGGER.info("Leverage configurada: %sx", settings.leverage)
+
+    if settings.enable_order_execution and not settings.dry_run:
+        try:
+            bybit_exec_client.ensure_one_way_mode(category="linear")
+            LOGGER.info("Modo de posição one-way verificado/configurado com sucesso.")
+        except BybitExecutionClientError as exc:
+            LOGGER.warning(
+                "Não foi possível verificar/configurar modo one-way no startup. "
+                "Verifique manualmente na interface da Bybit. reason=%s",
+                exc,
+            )
 
     signal_router = SignalRouter(bybit_client=bybit_read_client)
     execution_planner = ExecutionPlanner(settings=settings)

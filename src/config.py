@@ -28,6 +28,7 @@ class Settings:
     tp3_percent: float
     tp4_percent: float
     signal_source: str = "telegram"
+    leverage: int = 10
     auto_analysis_enabled: bool = False
     auto_analysis_symbol: str = "BTCUSDT"
     auto_analysis_interval: str = "60"
@@ -144,6 +145,7 @@ def load_settings() -> Settings:
         tp3_percent=tp3_percent,
         tp4_percent=tp4_percent,
         signal_source=os.getenv("SIGNAL_SOURCE", "telegram").strip().lower(),
+        leverage=_parse_int_env("LEVERAGE", default=10),
         auto_analysis_enabled=_parse_bool(os.getenv("AUTO_ANALYSIS_ENABLED"), default=False),
         auto_analysis_symbol=os.getenv("AUTO_ANALYSIS_SYMBOL", "BTCUSDT").strip().upper(),
         auto_analysis_interval=os.getenv("AUTO_ANALYSIS_INTERVAL", "60").strip(),

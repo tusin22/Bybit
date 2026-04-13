@@ -16,6 +16,7 @@ class InstrumentInfo:
     qty_step: str | None
     min_order_qty: str | None
     min_notional_value: str | None
+    max_leverage: str | None
     raw: dict[str, object]
 
 
@@ -75,6 +76,7 @@ class BybitReadOnlyClient:
         raw = items[0]
         price_filter = raw.get("priceFilter", {})
         lot_size_filter = raw.get("lotSizeFilter", {})
+        leverage_filter = raw.get("leverageFilter", {})
 
         tick_size = None
         if isinstance(price_filter, dict):
@@ -88,6 +90,10 @@ class BybitReadOnlyClient:
             min_order_qty = lot_size_filter.get("minOrderQty")
             min_notional_value = lot_size_filter.get("minNotionalValue")
 
+        max_leverage = None
+        if isinstance(leverage_filter, dict):
+            max_leverage = leverage_filter.get("maxLeverage")
+
         status = raw.get("status")
 
         return InstrumentInfo(
@@ -100,6 +106,7 @@ class BybitReadOnlyClient:
             min_notional_value=(
                 min_notional_value if isinstance(min_notional_value, str) else None
             ),
+            max_leverage=max_leverage if isinstance(max_leverage, str) else None,
             raw=raw,
         )
 
